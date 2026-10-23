@@ -3,7 +3,7 @@
 Steam library (as a non-Steam game).
 
     create_shortcuts(exe, icon, desktop=True)
-    add_to_steam(exe, icon)          -> list of Steam accounts it was added to
+    add_to_steam(exe, icon)          -> the files written (shortcuts.vdf, artwork)
     steam_running() / close_steam()
 
 Steam keeps non-Steam games in userdata/<account>/config/shortcuts.vdf (binary
@@ -155,6 +155,44 @@ def close_steam(timeout=30):
     return False
 
 
+# Library artwork, downloaded from SteamGridDB (https://www.steamgriddb.com/game/1647)
+# onto the player's machine when they add the game to Steam: nothing is shipped
+# with this project. kind -> (file name suffix in Steam's grid folder, URL, credit)
+STEAM_ART = {
+    "banner": ("", "https://cdn2.steamgriddb.com/grid/df193a49317e95704244d5e88c7a6902.jpg",
+               "Alfonso72394, SteamGridDB #164774"),
+    "cover": ("p", "https://cdn2.steamgriddb.com/grid/85feac317c419e5b015d1209f8882102.png",
+              "brendanrfoley, SteamGridDB #297136"),
+}
+
+
+def download_steam_art(grid_dir, appid, art=STEAM_ART, timeout=20):
+    """Fetch the artwork into a Steam account's config/grid folder, named after the
+    game's id. Returns the files written; a failed download is skipped."""
+    import urllib.request
+    os.makedirs(grid_dir, exist_ok=True)
+    written = []
+    for kind, (suffix, url, _) in art.items():
+        ext = os.path.splitext(url)[1].lower()
+        dest = os.path.join(grid_dir, f"{appid}{suffix}{ext}")
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "SFA3-Setup"})
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                data = r.read()
+            if not data.startswith((b"\x89PNG", b"\xff\xd8")):
+                continue  # not an image (an error page)
+            for old in (".png", ".jpg", ".jpeg"):  # an earlier copy with another extension wins otherwise
+                old_path = os.path.join(grid_dir, f"{appid}{suffix}{old}")
+                if old_path != dest and os.path.exists(old_path):
+                    os.remove(old_path)
+            with open(dest, "wb") as f:
+                f.write(data)
+            written.append(dest)
+        except OSError:
+            continue
+    return written
+
+
 # binary VDF: 0x00 map, 0x01 string, 0x02 int32, 0x08 end of map (all keys are C strings)
 
 def _cstr(buf, i):
@@ -222,9 +260,10 @@ def steam_app_id(exe_field, name):
     return (zlib.crc32((exe_field + name).encode()) & 0xFFFFFFFF) | 0x80000000
 
 
-def add_to_steam(exe, icon, roots=None):
-    """Add (or update) the game in every Steam account's library on this machine.
-    Steam must not be running. Returns the shortcuts.vdf files written."""
+def add_to_steam(exe, icon, roots=None, artwork=True):
+    """Add (or update) the game in every Steam account's library on this machine, with
+    its library artwork (STEAM_ART) unless artwork=False. Steam must not be running.
+    Returns the files written."""
     exe_field = f'"{exe}"'
     appid = steam_app_id(exe_field, NAME)
     entry = {
@@ -262,6 +301,8 @@ def add_to_steam(exe, icon, roots=None):
             os.makedirs(config, exist_ok=True)
             write_shortcuts(path, {str(i): s for i, s in enumerate(items)})
             written.append(path)
+            if artwork:
+                written += download_steam_art(os.path.join(config, "grid"), appid)
     return written
 
 
