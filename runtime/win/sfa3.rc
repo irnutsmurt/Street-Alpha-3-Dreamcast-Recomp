@@ -1,0 +1,3 @@
+// Windows resources for the game: the application manifest (UTF-8 file names
+// through the C runtime, long paths). Compiled by `sfa3port.py dev-libs`.
+1 24 "sfa3.manifest"

@@ -1,0 +1,29 @@
+8C0DA4A0  # cache routine run from P2
+8C0FDB40  # Shinobi exception trampolines, copied into the VBR page at init
+8C0FDB78
+8C0FDBD4
+8C010EE2  # called from 8C010E5A
+8C014020  # called from 8C0100C8
+8C012E6A  # called from 8C0100C8
+8C010E5E  # called from 8C0100C8
+8C0159B6  # called from 8C0100C8
+8C061D46  # called from 8C061D30
+8C072ED0  # called from 8C030142
+8C072FA0  # called from 8C072EDE
+8C07315E  # called from 8C073098
+8C073F2C  # called from 8C0731E6
+8C073F3E  # called from 8C073F3A
+8C074B6A  # called from 8C0731FE
+8C074B7C  # called from 8C074B78
+8C076C84  # called from 8C030142
+8C076C96  # called from 8C076C92
+8C076EF0  # called from 8C076CA4
+8C076600  # called from 8C030142
+8C077EAC  # called from 8C030316
+8C07844C  # called from 8C077EBA
+8C07845E  # called from 8C07845A
+8C0780C4  # called from 8C077EBA
+8C077EBE  # called from 8C077EBA
+8C077ED0  # called from 8C077ECC
+8C077F56  # called from 8C077EBA
+8C077F68  # called from 8C077F64
