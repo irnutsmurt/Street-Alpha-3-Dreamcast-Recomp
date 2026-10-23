@@ -13,13 +13,14 @@ import subprocess
 import sys
 import threading
 import tkinter as tk
-from tkinter import filedialog, ttk
+from tkinter import filedialog, messagebox, ttk
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 sys.path.insert(0, os.path.join(ROOT, "tools", "recomp"))
 
 import pipeline  # noqa: E402
+import shortcuts  # noqa: E402
 
 TITLE = "Street Fighter Alpha 3 — PC port setup"
 NEEDED_GB = 4  # unpacked image + extracted disc + build work files, at most
@@ -63,6 +64,9 @@ class App:
         self.install = tk.StringVar(value=default_install())
         ttk.Entry(form, textvariable=self.install).grid(row=2, column=1, sticky="ew", padx=6, pady=(8, 0))
         ttk.Button(form, text="Browse…", command=self.pick_install).grid(row=2, column=2, pady=(8, 0))
+        self.desktop = tk.BooleanVar(value=True)
+        ttk.Checkbutton(form, text="Create a desktop shortcut", variable=self.desktop).grid(
+            row=3, column=1, sticky="w", padx=6, pady=(6, 0))
 
         steps = ttk.LabelFrame(root, text="Progress")
         steps.pack(fill="x", **pad)
@@ -91,6 +95,8 @@ class App:
         self.play_btn.pack(side="right", padx=6)
         self.folder_btn = ttk.Button(buttons, text="Open folder", command=self.open_folder, state="disabled")
         self.folder_btn.pack(side="right")
+        self.steam_btn = ttk.Button(buttons, text="Add to Steam", command=self.add_to_steam, state="disabled")
+        self.steam_btn.pack(side="left")
         self.root.after(100, self.poll)
         self.find_existing()
 
@@ -113,6 +119,7 @@ class App:
             self.game = exe
             self.play_btn.config(state="normal")
             self.folder_btn.config(state="normal")
+            self.steam_btn.config(state="normal")
             self.status.config(text="Already installed. Convert again to rebuild it.")
 
     def toggle_log(self):
@@ -149,14 +156,19 @@ class App:
         self.convert_btn.config(state="disabled")
         self.play_btn.config(state="disabled")
         self.bar.config(value=0)
-        self.worker = threading.Thread(target=self.work, args=(image, install), daemon=True)
+        self.worker = threading.Thread(target=self.work, args=(image, install, self.desktop.get()), daemon=True)
         self.worker.start()
 
-    def work(self, image, install):
+    def work(self, image, install, desktop):
         try:
             out = pipeline.run(image, progress=lambda st, f, m: self.events.put(("progress", st, f, m)),
                                log=lambda m: self.events.put(("log", m)),
                                paths=pipeline.Paths(install=install), toolchain="zig")
+            try:
+                made = shortcuts.create_shortcuts(out, self.icon_for(out), desktop=desktop)
+                self.events.put(("log", "shortcuts: " + ", ".join(made)))
+            except Exception as e:  # shortcuts are a convenience: never fail the install over them
+                self.events.put(("log", f"shortcuts: not created ({e})"))
             self.events.put(("done", out))
         except pipeline.SetupError as e:
             self.events.put(("error", str(e)))
@@ -186,6 +198,14 @@ class App:
                     self.convert_btn.config(state="normal")
                     self.play_btn.config(state="normal")
                     self.folder_btn.config(state="normal")
+                    self.steam_btn.config(state="normal")
+                elif ev[0] == "steam":
+                    self.steam_btn.config(state="normal")
+                    if ev[1]:
+                        self.status.config(text="Added to your Steam library. Start Steam to see it.", foreground="#555")
+                        self.add_log("steam: " + ", ".join(ev[2]))
+                    else:
+                        self.fail(ev[2])
                 elif ev[0] == "error":
                     for s, m in self.marks.items():
                         if m.cget("text") == "►":
@@ -202,6 +222,38 @@ class App:
         self.root.after(8000, lambda: self.status.config(foreground="#555"))
 
     # ---------------- after ----------------
+
+    @staticmethod
+    def icon_for(exe):
+        # Windows: the icon inside sfa3.exe; Linux: icon.png next to it
+        return exe if os.name == "nt" else os.path.join(os.path.dirname(exe), "icon.png")
+
+    def add_to_steam(self):
+        if not self.game or not os.path.exists(self.game):
+            return self.fail("Convert the game first.")
+        if not shortcuts.steam_roots():
+            return self.fail("Steam doesn't seem to be installed for this user.")
+        running = shortcuts.steam_running()
+        if running and not messagebox.askyesno(
+                "Add to Steam", "Steam has to be closed while the game is added to your library.\n\n"
+                                "Close Steam now? You can start it again right after."):
+            return
+        self.steam_btn.config(state="disabled")
+        self.status.config(text="Closing Steam…" if running else "Adding to Steam…", foreground="#555")
+        game = self.game
+
+        def work():
+            try:
+                if running and not shortcuts.close_steam():
+                    return self.events.put(("steam", False, "Steam didn't close. Close it yourself, then try again."))
+                written = shortcuts.add_to_steam(game, self.icon_for(game))
+                if written:
+                    self.events.put(("steam", True, written))
+                else:
+                    self.events.put(("steam", False, "No Steam account found on this computer."))
+            except Exception as e:
+                self.events.put(("steam", False, f"Couldn't add the game to Steam ({e})."))
+        threading.Thread(target=work, daemon=True).start()
 
     def play(self):
         if self.game and os.path.exists(self.game):

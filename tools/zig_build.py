@@ -185,11 +185,21 @@ def vulkan_stub(runtime_lib, out_dir, zig=None, platform=HOST):
     return out
 
 
-def windows_resources(out_res, zig=None):
-    """runtime/win/sfa3.rc (the manifest) compiled to a .res the game links in."""
+def windows_resources(out_res, icon_png, zig=None):
+    """The game's Windows resources, compiled to a .res it links in: the manifest
+    (runtime/win/sfa3.manifest: UTF-8 file names, long paths) and the icon, made from
+    icon_png (assets/icon.png) as a multi-size .ico next to out_res (needs ImageMagick)."""
     zig = zig or find_zig()
-    rc = os.path.join(ROOT, "runtime", "win", "sfa3.rc")
-    subprocess.check_call([zig, "rc", "/fo", out_res, rc], cwd=os.path.dirname(rc))
+    out_dir = os.path.dirname(out_res)
+    ico = os.path.join(out_dir, "sfa3.ico")
+    subprocess.check_call(["magick", icon_png, "-define", "icon:auto-resize=256,64,48,32,16", ico])
+    shutil.copy2(os.path.join(ROOT, "runtime", "win", "sfa3.manifest"), out_dir)
+    rc = os.path.join(out_dir, "sfa3.rc")
+    with open(rc, "w") as f:
+        f.write('1 ICON "sfa3.ico"\n1 24 "sfa3.manifest"\n')
+    subprocess.check_call([zig, "rc", "/fo", out_res, rc], cwd=out_dir)
+    for tmp in (rc, os.path.join(out_dir, "sfa3.manifest")):
+        os.remove(tmp)
     return out_res
 
 
