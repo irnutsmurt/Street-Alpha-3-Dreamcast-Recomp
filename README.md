@@ -6,6 +6,11 @@ code into C and pairing it with a native runtime (Vulkan renderer, SDL3
 input/audio). It is not an emulator: no CPU is interpreted or JIT-compiled at
 runtime.
 
+> **Built 100% with AI.** All of this project's code, from the recompiler and
+> runtime to the setup app and build tooling, was written by AI
+> ([Claude Code](https://claude.com/claude-code), Anthropic's Claude), with a
+> human directing, testing and play-testing it.
+
 ## You need your own copy of the game
 
 **Use your own legally acquired copy of Street Fighter Alpha 3 for the Sega
