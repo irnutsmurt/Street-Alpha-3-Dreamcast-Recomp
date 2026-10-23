@@ -1,0 +1,18 @@
+# Never commit game data or anything derived from it.
+build/
+*.gdi
+*.bin
+*.raw
+*.iso
+*.cdi
+*.chd
+*.cue
+*.img
+# recompiler output is derived from the game's code
+generated/
+__pycache__/
+sfa3.cfg
+# working copies of art; the used versions are in assets/
+/floppy*.png
+/outline*.png
+*.pyc
