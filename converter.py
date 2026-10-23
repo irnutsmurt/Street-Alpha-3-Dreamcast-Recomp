@@ -202,7 +202,8 @@ class App:
                 elif ev[0] == "steam":
                     self.steam_btn.config(state="normal")
                     if ev[1]:
-                        self.status.config(text="Added to your Steam library. Start Steam to see it.", foreground="#555")
+                        self.status.config(text="Added to your Steam library, with artwork. Start Steam to see it.",
+                                           foreground="#555")
                         self.add_log("steam: " + ", ".join(ev[2]))
                     else:
                         self.fail(ev[2])

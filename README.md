@@ -66,6 +66,13 @@ Vulkan graphics driver: on Windows, Windows 10 or 11; on Linux, glibc 2.31 or
 newer (Ubuntu 20.04, Debian 11, Fedora 32 or later). `SFA3-Setup --convert IMAGE FOLDER` does the
 same without the window.
 
+When it's done, the app has added the game to your Start Menu (Windows) or app
+menu (Linux), and to your desktop if you left that ticked. **Add to Steam**
+puts it in your Steam library as a non-Steam game, so it works from Big
+Picture and on a Steam Deck. The library artwork is downloaded from
+[SteamGridDB](https://www.steamgriddb.com/game/1647) at that moment, onto your
+machine only (credits below).
+
 ### From source (developers)
 
 Requirements: Python 3.9+, CMake, Ninja, a C/C++ compiler (GCC or Clang),
@@ -218,3 +225,8 @@ Third-party components keep their own licences:
 | [libchdr](https://github.com/rtissera/libchdr) (`tools/third_party/libchdr`) | BSD-3-Clause | the CHD helper |
 | [SDL3](https://libsdl.org) | zlib | bundled with the setup app and the game |
 | [Zig](https://ziglang.org) | MIT | the setup app's bundled C compiler |
+
+Steam library artwork is not part of this repository or the downloads: **Add
+to Steam** fetches it from SteamGridDB on the player's machine. Banner by
+Alfonso72394 ([#164774](https://www.steamgriddb.com/grid/164774)), cover by
+brendanrfoley ([#297136](https://www.steamgriddb.com/grid/297136)).
