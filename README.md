@@ -196,3 +196,20 @@ Command line: `--host`, `--join <address>`, `--name <name>`, `--delay <frames>`
 | `runtime/` | native runtime: memory, Vulkan PowerVR2 renderer, input, audio, saves |
 | `assets/` | the port's own images (not game data) |
 | `build/` | **your** extracted disc and all derived output (never commit) |
+
+## License
+
+This project's code is licensed under the **GNU General Public License v3.0
+or later** (see [`LICENSE`](LICENSE)).
+
+The licence covers this project's own code and images only. Street Fighter
+Alpha 3 is © Capcom; none of its code or data is part of this repository, and
+the GPL grants no rights to it.
+
+Third-party components keep their own licences:
+
+| Component | Licence | Use |
+|---|---|---|
+| [libchdr](https://github.com/rtissera/libchdr) (`tools/third_party/libchdr`) | BSD-3-Clause | the CHD helper |
+| [SDL3](https://libsdl.org) | zlib | bundled with the setup app and the game |
+| [Zig](https://ziglang.org) | MIT | the setup app's bundled C compiler |

@@ -161,6 +161,7 @@ def bundle(platform):
     shutil.copy2(helper, os.path.join(out, "bin"))
     lic = os.path.join(out, "licenses")
     os.makedirs(lic)
+    shutil.copy2(os.path.join(ROOT, "LICENSE"), os.path.join(out, "LICENSE.txt"))  # this project: GPL-3.0-or-later
     shutil.copy2(os.path.join(ROOT, "tools", "third_party", "libchdr", "LICENSE.txt"), os.path.join(lic, "libchdr.txt"))
     shutil.copy2(os.path.join(zsrc, "LICENSE"), os.path.join(lic, "zig.txt"))
     shutil.copy2(os.path.join(ROOT, "build", "sdl3", f"SDL3-{zig_build.SDL_VERSION}", "LICENSE.txt"),
