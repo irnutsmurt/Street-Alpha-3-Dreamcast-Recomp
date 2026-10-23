@@ -131,7 +131,8 @@ def cmd_dev_libs(args):
         print(zig_build.vulkan_stub(lib, os.path.join(lib_dir, "link"), zig=zig, platform=plat))
         res = []
         if plat == "windows":  # the UTF-8 manifest, for the game and the helper alike
-            res = [zig_build.windows_resources(os.path.join(lib_dir, "sfa3.res"), zig=zig)]
+            res = [zig_build.windows_resources(os.path.join(lib_dir, "sfa3.res"),
+                                               os.path.join(ROOT, "assets", "icon.png"), zig=zig)]
             print(res[0])
         L = os.path.join(ROOT, "tools", "third_party", "libchdr")
         helper = os.path.join(BUILD, "tools", plat, "chd2gdi" + zig_build.exe_suffix(plat))

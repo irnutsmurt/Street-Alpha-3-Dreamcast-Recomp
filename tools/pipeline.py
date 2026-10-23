@@ -91,6 +91,7 @@ class Paths:
         self.lib_dir = next((d for d in (os.path.join(ROOT, "lib"), os.path.join(ROOT, "build", "lib", zig_build.HOST))
                              if os.path.exists(os.path.join(d, "libsfa3rt.a"))), None)
         self.runtime_lib = self.lib_dir and os.path.join(self.lib_dir, "libsfa3rt.a")
+        self.icon = find_file(os.path.join(ROOT, "lib", "icon.png"), os.path.join(ROOT, "assets", "icon.png"))
         self.zig = zig_build.find_zig()
         self.game_dir = install or os.path.join(self.build, "game")
 
@@ -181,6 +182,8 @@ def run(image, force=False, toolchain="auto", progress=None, log=print, paths=No
         else:  # found through the game's rpath ($ORIGIN/lib)
             os.makedirs(os.path.join(paths.install, "lib"), exist_ok=True)
             shutil.copy2(os.path.join(paths.lib_dir, "libSDL3.so.0"), os.path.join(paths.install, "lib"))
+        if paths.icon:  # for the menu / desktop shortcuts and Steam (Windows uses the one in sfa3.exe)
+            shutil.copy2(paths.icon, os.path.join(paths.install, "icon.png"))
         # work files the game doesn't need: compiled objects, the generated C, and
         # the extracted disc except what it reads from it (the rest comes from the image)
         shutil.rmtree(os.path.join(paths.game_dir, "obj"), ignore_errors=True)

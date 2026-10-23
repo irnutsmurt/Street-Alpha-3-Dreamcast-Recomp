@@ -154,6 +154,7 @@ def bundle(platform):
     for f in libs:
         os.makedirs(os.path.dirname(os.path.join(out, "lib", f)), exist_ok=True)
         shutil.copy2(os.path.join(lib_dir, f), os.path.join(out, "lib", f))
+    shutil.copy2(os.path.join(ROOT, "assets", "icon.png"), os.path.join(out, "lib", "icon.png"))
     os.makedirs(os.path.join(out, "runtime"))
     for h in glob.glob(os.path.join(ROOT, "runtime", "*.h")):
         shutil.copy2(h, os.path.join(out, "runtime"))
