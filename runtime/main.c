@@ -64,8 +64,16 @@ static uint8_t s_ip_bin[0x8000];
 static size_t load_file(const char *path, uint32_t addr) {
     FILE *f = fopen(path, "rb");
     if (!f) fatal("cannot open %s", path);
-    size_t n = fread(ram_ptr(addr), 1, 16 << 20, f);
+    /* ask for exactly the file's size: Windows fails the whole read (0 bytes) if the
+     * buffer range asked for runs past the end of the 16 MB RAM block */
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    size_t room = (16u << 20) - (addr & 0x00FFFFFFu);
+    if (size <= 0 || (size_t)size > room) fatal("%s: bad size %ld", path, size);
+    size_t n = fread(ram_ptr(addr), 1, (size_t)size, f);
     fclose(f);
+    if (n != (size_t)size) fatal("%s: read %zu of %ld bytes", path, n, size);
     logf_("loaded %s: %zu bytes at %08X", path, n, addr);
     return n;
 }
