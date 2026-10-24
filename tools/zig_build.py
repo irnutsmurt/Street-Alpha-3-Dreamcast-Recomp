@@ -70,19 +70,23 @@ def _run(cmd, **kw):
 
 
 def _compile_all(zig, jobs, progress, label, platform=HOST):
-    """jobs: (source, object, flags); progress(done, total, label)"""
-    done, total, errors = 0, len(jobs), []
+    """jobs: (source, object, flags[, cached]); progress(done, total, label) counts only
+    the sources that need compiling. Returns how many did."""
+    def current(job):
+        src, obj = job[:2]
+        cached = len(job) > 3 and job[3]  # obj is named by a fingerprint of src + flags: existing means current
+        return os.path.exists(obj) and (cached or os.path.getmtime(obj) >= os.path.getmtime(src))
+
+    todo = [j for j in jobs if not current(j)]
+    done, total, errors = 0, len(todo), []
 
     def one(job):
         src, obj, flags = job[:3]
-        cached = len(job) > 3 and job[3]  # obj is named by a fingerprint of src + flags: existing means current
-        if os.path.exists(obj) and (cached or os.path.getmtime(obj) >= os.path.getmtime(src)):
-            return src, 0, ""  # up to date
         r = _run([zig, "cc", "-c", *target(platform), *flags, src, "-o", obj], capture_output=True, text=True)
         return src, r.returncode, r.stderr
 
     with cf.ThreadPoolExecutor(_jobs()) as ex:
-        for src, rc, err in ex.map(one, jobs):
+        for src, rc, err in ex.map(one, todo):
             done += 1
             if rc:
                 errors.append(f"{os.path.basename(src)}:\n{err[-2000:]}")
@@ -90,6 +94,7 @@ def _compile_all(zig, jobs, progress, label, platform=HOST):
                 progress(done, total, label)
     if errors:
         raise BuildError("compiling failed:\n" + "\n".join(errors[:3]))
+    return total
 
 
 # ---------------- developer side: the runtime library and its dependencies ----------------
@@ -217,7 +222,7 @@ def game_link_args(lib_dir, platform=HOST):
             "-Wl,-rpath,$ORIGIN/lib", "-rdynamic"]
 
 
-def build_game(gen_dir, runtime_lib, out_exe, libs, zig=None, progress=None, strip=True, extra_cflags=(),
+def build_game(gen_dir, runtime_lib, out_exe, libs, zig=None, progress=None, log=None, strip=True, extra_cflags=(),
                platform=HOST, cache_dir=None):
     """Compile the recompiled C in gen_dir (its sources.txt) and link it with the
     runtime library. libs: game_link_args().
@@ -248,7 +253,9 @@ def build_game(gen_dir, runtime_lib, out_exe, libs, zig=None, progress=None, str
             jobs.append((src, os.path.join(obj_dir, f"{n[:-2]}-{h.hexdigest()[:16]}.o"), flags, True))
         else:
             jobs.append((src, os.path.join(obj_dir, n[:-2] + ".o"), flags))
-    _compile_all(zig, jobs, progress, "game", platform)
+    compiled = _compile_all(zig, jobs, progress, "game", platform)
+    if log:
+        log(f"game code: {compiled} of {len(jobs)} files compiled, {len(jobs) - compiled} reused")
     if progress:
         progress(0, 1, "link")
     cmd = [zig, "cc", *target(platform), "-o", out_exe, *[j[1] for j in jobs], runtime_lib, *libs]
