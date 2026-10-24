@@ -9,8 +9,10 @@
 enum {
     CHEAT_HEALTH,       /* your health stays full */
     CHEAT_SUPER,        /* your super meter stays full */
+    CHEAT_GUARD,        /* your guard meter never wears down */
     CHEAT_HALF_HEALTH,  /* half a health bar: off, you, the CPU or both */
     CHEAT_CPU_KO,       /* the CPU is knocked out by any damage */
+    CHEAT_CPU_GUARD_CRUSH, /* the CPU's guard breaks on the next hit it blocks */
     CHEAT_CPU_SUPER,    /* the CPU's super meter stays empty */
     CHEAT_FINAL_BISON,  /* Final Bison unlocked (hold Start on M. Bison) */
     CHEAT_WT_EXP,       /* World Tour: your EXP at the most (9999999) */
