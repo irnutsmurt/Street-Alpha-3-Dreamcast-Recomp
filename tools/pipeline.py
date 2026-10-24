@@ -191,11 +191,8 @@ def run(image, force=False, toolchain="auto", progress=None, log=print, paths=No
     # 4. recompile
     step("recomp")
     import recompile
-    buf = io.StringIO()
-    with contextlib.redirect_stdout(buf):
-        recompile.run(paths.disc, paths.generated)
-    for line in buf.getvalue().splitlines():
-        log("recomp: " + line.strip())
+    recompile.run(paths.disc, paths.generated, report=lambda m: log("recomp: " + m),
+                  progress=lambda d, t: step("recomp", d / max(t, 1)))
 
     # 5. build
     use_zig = toolchain == "zig" or (toolchain == "auto" and paths.zig and paths.runtime_lib)
@@ -222,7 +219,7 @@ def run(image, force=False, toolchain="auto", progress=None, log=print, paths=No
         try:
             zig_build.build_game(paths.generated, paths.runtime_lib, out, zig_build.game_link_args(paths.lib_dir),
                                  zig=paths.zig, cache_dir=os.path.join(paths.build, "cache") if paths.install else None,
-                                 log=log,
+                                 log=lambda m: log("build: " + m),
                                  progress=lambda d, t, label: step("build", d / max(t, 1),
                                                                    "Linking" if label == "link" else
                                                                    f"Compiling ({d} of {t})"))

@@ -54,6 +54,8 @@ static void item_change(int i, int dir) {
 #define VALUE_RIGHT 360
 #define ROW_Y0 48
 #define ROW_STEP 10
+/* CHEATS has more rows: everything starts higher, the title just under the top frame */
+#define CHEATS_LIFT 20
 /* the game's row-highlight object only knows the original screen's rows;
  * pointing the cursor past them hides it */
 #define NO_HIGHLIGHT_ROW 7
@@ -83,11 +85,12 @@ static int cursor_pos(const int *rows, int n) {
 void hle_display_draw(void) {
     gameui_begin(TEXT_ARENA, TEXT_ARENA_END, 0x8C07C6B0u);
     const char *title = s_cheats ? "CHEATS" : "DISPLAY OPTION";
-    gameui_print(title, SCREEN_W / 2 - gameui_text_w(title) / 2, TITLE_Y, COL_GOLD);
-    int rows[ROW_MAX], n = visible_rows(rows), y = ROW_Y0;
+    int lift = s_cheats ? CHEATS_LIFT : 0;
+    gameui_print(title, SCREEN_W / 2 - gameui_text_w(title) / 2, TITLE_Y - lift, COL_GOLD);
+    int rows[ROW_MAX], n = visible_rows(rows), y = ROW_Y0 - lift;
     for (int i = 0; i < n; i++) {
         int r = rows[i], sel = r == s_cursor;
-        y = ROW_Y0 + i * ROW_STEP + (r >= row_default() ? 4 : 0);
+        y = ROW_Y0 - lift + i * ROW_STEP + (r >= row_default() ? 4 : 0);
         if (r >= items()) {
             /* centred like the game's own DEFAULT / EXIT */
             const char *label = r == row_default() ? "DEFAULT" : "EXIT";
@@ -104,8 +107,8 @@ void hle_display_draw(void) {
         gameui_print(shown, VALUE_RIGHT - gameui_text_w(shown), y, sel ? COL_GOLD : COL_BLUE);
     }
     if (s_cheats) {
-        gameui_center("AGAINST THE CPU ONLY", y + 20, COL_GREY);
-        gameui_center("FINAL BISON: START ON M.BISON", y + 30, COL_GREY);
+        gameui_center("AGAINST THE CPU ONLY", y + 14, COL_GREY);
+        gameui_center("FINAL BISON: START ON M.BISON", y + 24, COL_GREY);
     }
 }
 
