@@ -1,12 +1,12 @@
 /* QUIT GAME? on the title screen.
  *
  * On the title screen (PRESS START BUTTON: the mode menu task's state 1,
- * 0x8C0625E0), the gamepad's Back button or Esc asks "QUIT GAME?" with YES /
+ * 0x8C0625E0), B, the gamepad's Back button or Esc asks "QUIT GAME?" with YES /
  * NO (NO first), drawn like the pause menu's prompt: a purple panel, the
  * game's font and colours, the cursor bar and sounds. YES closes the game,
  * as closing the window does. While it is up the title sees no presses and
- * its attract-demo timer stands still. Elsewhere Back / Esc keep opening the
- * settings menu. Not in a netplay session (there is no title screen there). */
+ * its attract-demo timer stands still. Not in a netplay session (there is no
+ * title screen there). */
 #include "cpu.h"
 #include "gameui.h"
 #include "sprite_swap.h"
@@ -67,8 +67,21 @@ void hle_title_logic(void) {
     uint32_t state = g.r[4], r5 = g.r[5];  /* the routine's arguments (the sounds below clobber them) */
     s_title_frame = g_vblank_count;
     gameui_begin(TEXT_ARENA, TEXT_ARENA_END, 0x8C0625E0u);
-    if (!s_open) { f_8C0625E0_orig(); return; }
     uint32_t pressed = gameui_presses(&s_in, gameui_pad_held(0) | gameui_pad_held(1), 0);
+    if (!s_open) {
+        /* B (the gamepad's usual "back") asks too; the title itself has no use for it */
+        if (pressed & PAD_CANCEL) {
+            title_quit_toggle();
+            gameui_sound(SND_CURSOR);
+            s_in.prev_held = gameui_pad_held(0) | gameui_pad_held(1);
+            no_presses();
+            g.r[4] = state;
+            g.r[5] = r5;
+        }
+        f_8C0625E0_orig();
+        if (s_open) draw();
+        return;
+    }
     if (pressed & (PAD_UP | PAD_DOWN | PAD_LEFT | PAD_RIGHT)) {
         s_choice ^= 1;
         gameui_sound(SND_CURSOR);

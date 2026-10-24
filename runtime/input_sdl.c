@@ -277,15 +277,20 @@ void input_update(void) {
                 if (sc == SDL_SCANCODE_ESCAPE) { text_push(27); continue; }
             }
         }
-        /* settings menu: F1 / Esc, or Back on a gamepad; on the title screen
-         * Back / Esc ask QUIT GAME? instead (title_quit.c) */
+        /* the settings overlay: F1 only (its options are in the game's own
+         * pause menu now). On the title screen Back / Esc ask QUIT GAME?
+         * (title_quit.c); in the overlay they go back. */
         int back = (e.type == SDL_EVENT_KEY_DOWN && e.key.scancode == SDL_SCANCODE_ESCAPE && !e.key.repeat) ||
                    (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && e.gbutton.button == SDL_GAMEPAD_BUTTON_BACK);
         if (back && !menu_active() && title_quit_available()) {
             title_quit_toggle();
             continue;
         }
-        if (back || (e.type == SDL_EVENT_KEY_DOWN && e.key.scancode == SDL_SCANCODE_F1 && !e.key.repeat)) {
+        if (back && menu_active()) {
+            menu_action(MENU_BACK);
+            continue;
+        }
+        if (e.type == SDL_EVENT_KEY_DOWN && e.key.scancode == SDL_SCANCODE_F1 && !e.key.repeat) {
             if (menu_active()) menu_action(MENU_BACK); else menu_toggle();
             continue;
         }
