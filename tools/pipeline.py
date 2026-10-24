@@ -28,6 +28,7 @@ sys.path.insert(0, os.path.join(ROOT, "tools", "recomp"))
 
 import disc_image  # noqa: E402
 import zig_build  # noqa: E402
+from version import VERSION  # noqa: E402
 
 STEPS = ["disc", "extract", "verify", "recomp", "build", "finish"]
 STEP_NAMES = {
@@ -48,6 +49,20 @@ KNOWN = {
 
 class SetupError(Exception):
     pass
+
+
+def install_info(install):
+    """What an earlier conversion recorded in <install>/data/install.json, or None.
+    "gdi": the disc it read (an update reuses it), "version": the setup that built it."""
+    import json
+    try:
+        with open(os.path.join(install, "data", "install.json")) as f:
+            info = json.load(f)
+    except (OSError, ValueError):
+        return None
+    if not os.path.exists(info.get("gdi", "")):
+        info["gdi"] = None  # the disc image was moved or deleted: a full conversion is needed
+    return info
 
 
 def sha1(path):
@@ -97,7 +112,9 @@ class Paths:
 
 
 def run(image, force=False, toolchain="auto", progress=None, log=print, paths=None):
-    """The whole setup. Returns the path of the built executable."""
+    """The whole setup. Returns the path of the built executable.
+    image=None updates an existing install (paths.install): the disc it was made
+    from is read again, and only what changed is compiled (the object cache)."""
     paths = paths or Paths()
     say = progress or (lambda step, frac, msg: None)
 
@@ -106,11 +123,20 @@ def run(image, force=False, toolchain="auto", progress=None, log=print, paths=No
 
     # 1. the disc as a GDI
     step("disc")
-    try:
-        gdi = disc_image.to_gdi(image, paths.image_work, paths.chd_helper,
-                                progress=lambda d, t: step("disc", d / max(t, 1), "Unpacking the CHD"))
-    except disc_image.ImageError as e:
-        raise SetupError(str(e))
+    if image is None:
+        info = install_info(paths.install) if paths.install else None
+        if not info or not info.get("gdi"):
+            raise SetupError("can't update: the disc image this was installed from wasn't found. "
+                             "Choose your disc image to convert again.")
+        gdi = info["gdi"]
+        source_image = info.get("image")
+    else:
+        source_image = os.path.abspath(image)
+        try:
+            gdi = disc_image.to_gdi(image, paths.image_work, paths.chd_helper,
+                                    progress=lambda d, t: step("disc", d / max(t, 1), "Unpacking the CHD"))
+        except disc_image.ImageError as e:
+            raise SetupError(str(e))
     log(f"disc: {gdi}")
 
     # 2. extract
@@ -155,14 +181,33 @@ def run(image, force=False, toolchain="auto", progress=None, log=print, paths=No
             raise SetupError("the prebuilt runtime libraries are missing (developers: ./sfa3port.py dev-libs)")
         os.makedirs(paths.game_dir, exist_ok=True)
         out = os.path.join(paths.game_dir, exe_name("sfa3"))
+        # the game may be running: Windows can't overwrite a running .exe but can
+        # rename it, so move the old one aside (removed now or by a later update)
+        old = out + ".old"
+        for leftover in (old,):
+            try:
+                os.remove(leftover)
+            except OSError:
+                pass
+        if os.path.exists(out):
+            try:
+                os.replace(out, old)
+            except OSError as e:
+                raise SetupError(f"can't replace the game ({e.strerror}). Close the game and try again.")
         try:
             zig_build.build_game(paths.generated, paths.runtime_lib, out, zig_build.game_link_args(paths.lib_dir),
-                                 zig=paths.zig,
+                                 zig=paths.zig, cache_dir=os.path.join(paths.build, "cache") if paths.install else None,
                                  progress=lambda d, t, label: step("build", d / max(t, 1),
                                                                    "Linking" if label == "link" else
                                                                    f"Compiling ({d} of {t})"))
         except zig_build.BuildError as e:
+            if os.path.exists(old) and not os.path.exists(out):
+                os.replace(old, out)  # keep the game that was there
             raise SetupError(str(e))
+        try:
+            os.remove(old)
+        except OSError:
+            pass  # still running: a later update removes it
     else:
         step("build", 0, "Building (CMake)")
         bdir = os.path.join(paths.build, "cmake")
@@ -184,9 +229,10 @@ def run(image, force=False, toolchain="auto", progress=None, log=print, paths=No
             shutil.copy2(os.path.join(paths.lib_dir, "libSDL3.so.0"), os.path.join(paths.install, "lib"))
         if paths.icon:  # for the menu / desktop shortcuts and Steam (Windows uses the one in sfa3.exe)
             shutil.copy2(paths.icon, os.path.join(paths.install, "icon.png"))
-        # work files the game doesn't need: compiled objects, the generated C, and
-        # the extracted disc except what it reads from it (the rest comes from the image)
-        shutil.rmtree(os.path.join(paths.game_dir, "obj"), ignore_errors=True)
+        # work files the game doesn't need: the generated C (made again in seconds)
+        # and the extracted disc except what it reads from it (the rest comes from
+        # the image). The compiled objects stay in data/cache for updates.
+        shutil.rmtree(os.path.join(paths.game_dir, "obj"), ignore_errors=True)  # from versions before the cache
         shutil.rmtree(paths.generated, ignore_errors=True)
         for name in os.listdir(paths.disc):
             if name not in ("IP.BIN", "1ST_READ.BIN"):
@@ -194,5 +240,11 @@ def run(image, force=False, toolchain="auto", progress=None, log=print, paths=No
                 shutil.rmtree(p) if os.path.isdir(p) else os.remove(p)
     with open(os.path.join(paths.build, "disc_path.txt"), "w") as f:
         f.write(gdi + "\n")
+    if paths.install:
+        import json
+        import time
+        with open(os.path.join(paths.build, "install.json"), "w") as f:
+            json.dump({"version": VERSION, "gdi": os.path.abspath(gdi), "image": source_image,
+                       "built": int(time.time())}, f, indent=1)
     step("finish", 1.0, "Done")
     return out
