@@ -16,3 +16,4 @@ sfa3.cfg
 /floppy*.png
 /outline*.png
 *.pyc
+/sfa3icon.png
