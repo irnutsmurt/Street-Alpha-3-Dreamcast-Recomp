@@ -28,7 +28,7 @@ set(RUNTIME_SRC
   runtime/ta.c runtime/hle.c runtime/gdi.c runtime/maple.c runtime/aica.c
   runtime/overlay.c runtime/input_sdl.c runtime/task.c
   runtime/fiber.c runtime/sjlj.c runtime/arm_rt.c runtime/settings.c runtime/menu.c runtime/controls.c runtime/options.c runtime/display_menu.c runtime/buttoncfg.c runtime/pause_menu.c runtime/title_quit.c runtime/net.c runtime/netplay.c
-  runtime/gameui.c runtime/lobby.c runtime/sprite_swap.c)
+  runtime/gameui.c runtime/lobby.c runtime/sprite_swap.c runtime/cheats.c runtime/option_menu.c)
 if(RENDERER STREQUAL "null")
   list(APPEND RUNTIME_SRC runtime/renderer_null.c)
 else()

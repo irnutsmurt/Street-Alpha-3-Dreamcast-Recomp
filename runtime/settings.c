@@ -37,6 +37,11 @@ static const struct {
     K(scanline_strength, "SFA3_SCANLINE_STRENGTH", 10, 100, "CRT look strength in percent (10-100)"),
     K(nearest, "SFA3_NEAREST", 0, 1, "1 = sharp point-sampled textures, 0 = the game's own filtering"),
     K(skip_intro, "SFA3_SKIP_INTRO", 0, 1, "1 = skip the Capcom logos and the intro at power-on"),
+    K(cheat_health, "SFA3_CHEAT_HEALTH", 0, 1, "cheat: 1 = your health stays full (fights against the CPU)"),
+    K(cheat_super, "SFA3_CHEAT_SUPER", 0, 1, "cheat: 1 = your super meter stays full (fights against the CPU)"),
+    K(cheat_cpu_ko, "SFA3_CHEAT_CPU_KO", 0, 1, "cheat: 1 = any damage knocks the CPU out"),
+    K(cheat_cpu_super, "SFA3_CHEAT_CPU_SUPER", 0, 1, "cheat: 1 = the CPU's super meter stays empty"),
+    K(cheat_final_bison, "SFA3_CHEAT_FINAL_BISON", 0, 1, "cheat: 1 = Final Bison unlocked (hold Start on M. Bison)"),
 #undef K
 };
 #define NKEYS (sizeof s_keys / sizeof s_keys[0])
@@ -109,7 +114,7 @@ void settings_save(void) {
     FILE *f = fopen(s_path, "w");
     if (!f) return;
     fputs("# Street Fighter Alpha 3 native port settings.\n"
-          "# Also editable in-game: Option Mode > DISPLAY, or F1 / Esc at any time.\n", f);
+          "# Also editable in-game: Option Mode > DISPLAY and CHEATS, or F1 at any time.\n", f);
     for (size_t i = 0; i < NKEYS; i++)
         fprintf(f, "# %s\n%s = %d\n", s_keys[i].comment, s_keys[i].key, *field(&s_file, i));
     fprintf(f, "# your name in netplay lobbies (NETWORK > NAME)\nname = %s\n", s_file.name);

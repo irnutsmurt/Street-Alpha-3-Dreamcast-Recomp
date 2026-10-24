@@ -171,6 +171,24 @@ settings are also on F1 / Esc at any time (this pauses the game):
 Changes apply immediately and are saved to `sfa3.cfg` (not to the memory card
 save), which can also be edited by hand.
 
+**Cheats** — *Option Mode > CHEATS* (a fifth button, under DISPLAY), and
+**CHEATS** on F1:
+
+| Cheat | What it does |
+|---|---|
+| Infinite health | your health refills after every hit |
+| Infinite super | your super meter stays full (every -ism) |
+| One hit KO on CPU | any damage knocks the CPU out |
+| No super for CPU | the CPU's super meter stays empty |
+| Final Bison | unlocks Final Bison: hold Start and press a button on M. Bison (Arcade, VS, Training) |
+
+The fight cheats work only in fights against the CPU: never in netplay, and not
+while two people are fighting (a challenger joining an Arcade fight turns them
+off for that fight). **CHEATS ON** shows above the meters while they are
+working. Final Bison stays unlocked once chosen and goes into the memory card
+save the next time the game saves. Shin Akuma needs no cheat: hold Start and
+press a button on Akuma. Cheat settings are saved in `sfa3.cfg`.
+
 **Saves** — a memory card is emulated in controller port A, slot 1, and stored
 in `build/vmu_a1.bin` (written every few seconds and on exit). Use the game's
 Memory Card / Option menus to save and load as on a Dreamcast. The memory card

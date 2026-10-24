@@ -18,6 +18,9 @@ typedef struct {
     int scanline_strength;  /* how strong the CRT look is, percent, 10..100 */
     int nearest;            /* 1 = sharp point-sampled textures */
     int skip_intro;         /* 1 = straight from power-on to the title (the save still loads) */
+    /* cheats (cheats.h): fights against the CPU only */
+    int cheat_health, cheat_super, cheat_cpu_ko, cheat_cpu_super;
+    int cheat_final_bison;  /* 1 = unlocked (kept in the game's own save too) */
     char name[16];          /* netplay player name (NETWORK > NAME) */
 } Settings;
 

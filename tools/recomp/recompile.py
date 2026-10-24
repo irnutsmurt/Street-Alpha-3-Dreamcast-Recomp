@@ -38,13 +38,16 @@ HOOKS = {
     0x8C02EB8C: "hle_pause_logic",
     0x8C02EE26: "hle_pause_draw",
     0x8C07E17C: "hle_option_object",  # Option Mode sprite objects (hides the old screen's widgets)
+    # Option Mode's menu: a fifth button, CHEATS
+    0x8C07AF3C: "hle_option_top",
+    0x8C07D988: "hle_option_button",
     # Mode Menu > NETWORK: the online menu becomes the netplay lobby
     0x8C02D3E0: "hle_network_init",
     0x8C02D4C0: "hle_network_logic",
     0x8C06273C: "hle_mode_menu_input",  # Mode Menu input: start a mode directly (lobby, autopilot)
 }
 # Hooked functions whose original body is still emitted, as <name>_orig.
-KEEP_ORIGINAL = {0x8C0625E0, 0x8C02EB8C, 0x8C02EE26, 0x8C07B7B4, 0x8C07D2E0, 0x8C07CD5A, 0x8C07CE14, 0x8C094510, 0x8C0100BC, 0x8C07BC42, 0x8C07E17C, 0x8C06273C}
+KEEP_ORIGINAL = {0x8C07AF3C, 0x8C07D988, 0x8C0625E0, 0x8C02EB8C, 0x8C02EE26, 0x8C07B7B4, 0x8C07D2E0, 0x8C07CD5A, 0x8C07CE14, 0x8C094510, 0x8C0100BC, 0x8C07BC42, 0x8C07E17C, 0x8C06273C}
 
 
 def extra_entries():

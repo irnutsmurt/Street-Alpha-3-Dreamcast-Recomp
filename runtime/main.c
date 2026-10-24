@@ -18,6 +18,7 @@ static int setenv(const char *name, const char *value, int overwrite) { (void)ov
 #include <stdlib.h>
 #include <string.h>
 
+#include "cheats.h"
 #include "cpu.h"
 #include "input.h"
 #include "pvr.h"
@@ -237,6 +238,8 @@ Perf g_perf;
 void video_vblank(void) {
     s_frames++;
     g_stats.vblanks++;
+    cheats_frame();
+    menu_tag(cheats_active() ? "CHEATS ON" : "");
     if (s_frames % 60 == 0) {
         static uint64_t last;
         uint64_t t = SDL_GetTicksNS(), wall = last ? t - last : 0;
