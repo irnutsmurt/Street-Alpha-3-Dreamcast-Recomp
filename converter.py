@@ -50,7 +50,7 @@ def load_settings():
 
 def save_settings(**values):
     v = load_settings()
-    v.update({k: x for k, x in values.items() if x})
+    v.update({k: x for k, x in values.items() if x is not None})
     try:
         os.makedirs(os.path.dirname(settings_path()), exist_ok=True)
         with open(settings_path(), "w") as f:
@@ -64,6 +64,64 @@ def same_file(a, b):
         return bool(a and b) and os.path.samefile(a, b)
     except OSError:
         return False
+
+
+# ---------------- look: dark (the default) or light ----------------
+
+PALETTES = {
+    "dark": {"bg": "#1e2026", "panel": "#262931", "field": "#2e323b", "fg": "#e6e8ee", "muted": "#a4a9b6",
+             "faint": "#7d8391", "border": "#3c414c", "button": "#343944", "button_hi": "#414755",
+             "accent": "#4c8dff", "link": "#6ea8ff", "ok": "#5cc46a", "busy": "#f0a030", "err": "#ff6b6b",
+             "trough": "#2e323b", "select": "#3d5a8a"},
+    "light": {"bg": "#f2f2f2", "panel": "#f2f2f2", "field": "#ffffff", "fg": "#1e1e1e", "muted": "#555555",
+              "faint": "#777777", "border": "#b8b8b8", "button": "#e4e4e4", "button_hi": "#d6d6d6",
+              "accent": "#3576d0", "link": "#1a5fb4", "ok": "#2a8a2a", "busy": "#c07000", "err": "#c02020",
+              "trough": "#dcdcdc", "select": "#b5cdf0"},
+}
+
+
+def apply_theme(root, dark, log=None):
+    """Colour every widget: ttk styles (Muted / Faint / Link / Ok / Busy / Err .TLabel for coloured text),
+    the window, the log, and on Windows the title bar."""
+    c = PALETTES["dark" if dark else "light"]
+    style = ttk.Style(root)
+    if "clam" in style.theme_names():
+        style.theme_use("clam")  # the one theme every colour can be set in, on Windows too
+    style.configure(".", background=c["bg"], foreground=c["fg"], fieldbackground=c["field"],
+                    bordercolor=c["border"], lightcolor=c["bg"], darkcolor=c["bg"], troughcolor=c["trough"],
+                    selectbackground=c["select"], selectforeground=c["fg"], insertcolor=c["fg"])
+    style.map(".", foreground=[("disabled", c["faint"])])
+    style.configure("TLabelframe", background=c["bg"], bordercolor=c["border"])
+    style.configure("TLabelframe.Label", background=c["bg"], foreground=c["muted"])
+    style.configure("TButton", background=c["button"], bordercolor=c["border"], focuscolor=c["accent"],
+                    lightcolor=c["button"], darkcolor=c["button"], padding=(10, 4))
+    style.map("TButton", background=[("disabled", c["bg"]), ("pressed", c["accent"]), ("active", c["button_hi"])],
+              foreground=[("disabled", c["faint"])])
+    style.configure("TEntry", fieldbackground=c["field"], foreground=c["fg"], insertcolor=c["fg"])
+    style.map("TEntry", bordercolor=[("focus", c["accent"])])
+    style.configure("TCheckbutton", background=c["bg"], foreground=c["fg"], indicatorbackground=c["field"],
+                    indicatorforeground=c["fg"])
+    style.map("TCheckbutton", background=[("active", c["bg"])], indicatorbackground=[("selected", c["accent"])])
+    style.configure("Horizontal.TProgressbar", background=c["accent"], troughcolor=c["trough"],
+                    bordercolor=c["border"], lightcolor=c["accent"], darkcolor=c["accent"])
+    for name, key in (("Muted", "muted"), ("Faint", "faint"), ("Link", "link"), ("Ok", "ok"), ("Busy", "busy"),
+                      ("Err", "err")):
+        style.configure(f"{name}.TLabel", foreground=c[key])
+    root.configure(background=c["bg"])
+    if log is not None:
+        log.configure(background=c["field"], foreground=c["fg"], insertbackground=c["fg"],
+                      selectbackground=c["select"], highlightthickness=0, relief="flat")
+    if os.name == "nt":  # the title bar (Windows 10 1809+ / 11; ignored elsewhere)
+        try:
+            import ctypes
+            root.update_idletasks()
+            hwnd = ctypes.windll.user32.GetParent(root.winfo_id())
+            on = ctypes.c_int(1 if dark else 0)
+            for attr in (20, 19):  # DWMWA_USE_IMMERSIVE_DARK_MODE (and its pre-20H1 number)
+                if not ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, attr, ctypes.byref(on), ctypes.sizeof(on)):
+                    break
+        except Exception:
+            pass
 
 
 def default_install():
@@ -82,19 +140,18 @@ class App:
         self.info = None  # the install's install.json
         root.title(f"{TITLE} {VERSION}")
         root.minsize(620, 520)
-        style = ttk.Style(root)
-        if os.name != "nt" and "clam" in style.theme_names():
-            style.theme_use("clam")  # Windows keeps its native look
+        self.dark = tk.BooleanVar(value=load_settings().get("dark", True))
+        apply_theme(root, self.dark.get())
         pad = {"padx": 12, "pady": 6}
 
         ttk.Label(root, text="Street Fighter Alpha 3", font=("TkDefaultFont", 16, "bold")).pack(anchor="w", padx=12,
                                                                                                pady=(14, 0))
         self.subtitle = ttk.Label(root, text="Builds the native PC version from your own Dreamcast disc. Nothing from "
-                                             "the game is included with this app.", wraplength=590, foreground="#555")
+                                             "the game is included with this app.", wraplength=590, style="Muted.TLabel")
         self.subtitle.pack(anchor="w", **pad)
 
         self.update_bar = ttk.Frame(root)  # shown when a newer version of this app is out
-        self.update_label = ttk.Label(self.update_bar, foreground="#1a5fb4")
+        self.update_label = ttk.Label(self.update_bar, style="Link.TLabel")
         self.update_label.pack(side="left")
         self.update_btn = ttk.Button(self.update_bar, text="Get it", command=self.get_new_app)
         self.update_btn.pack(side="left", padx=8)
@@ -109,7 +166,7 @@ class App:
         self.image = tk.StringVar(value=last_image if os.path.isfile(last_image) else "")
         ttk.Entry(form, textvariable=self.image).grid(row=0, column=1, sticky="ew", padx=6)
         ttk.Button(form, text="Browse…", command=self.pick_image).grid(row=0, column=2)
-        ttk.Label(form, text="GDI, CUE/BIN (Redump) or CHD of Street Fighter Alpha 3 (USA)", foreground="#777").grid(
+        ttk.Label(form, text="GDI, CUE/BIN (Redump) or CHD of Street Fighter Alpha 3 (USA)", style="Faint.TLabel").grid(
             row=1, column=1, sticky="w", padx=6)
         ttk.Label(form, text="Install to").grid(row=2, column=0, sticky="w", pady=(8, 0))
         self.install = tk.StringVar(value=(after_update or {}).get("install") or remembered.get("install")
@@ -131,13 +188,17 @@ class App:
         self.bar = ttk.Progressbar(steps, maximum=1.0)
         self.bar.grid(row=len(pipeline.STEPS), column=0, columnspan=2, sticky="ew", padx=10, pady=(8, 2))
         steps.columnconfigure(1, weight=1)
-        self.status = ttk.Label(steps, text="Ready.", foreground="#555", wraplength=570)
+        self.status = ttk.Label(steps, text="Ready.", style="Muted.TLabel", wraplength=570)
         self.status.grid(row=len(pipeline.STEPS) + 1, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 8))
 
         self.log_shown = tk.BooleanVar(value=False)
-        ttk.Checkbutton(root, text="Show details", variable=self.log_shown, command=self.toggle_log).pack(
-            anchor="w", padx=12)
+        toggles = ttk.Frame(root)
+        toggles.pack(fill="x", padx=12)
+        ttk.Checkbutton(toggles, text="Show details", variable=self.log_shown, command=self.toggle_log).pack(
+            side="left")
+        ttk.Checkbutton(toggles, text="Dark mode", variable=self.dark, command=self.toggle_dark).pack(side="right")
         self.log = tk.Text(root, height=8, wrap="word", state="disabled", font=("TkFixedFont", 9))
+        apply_theme(root, self.dark.get(), self.log)
 
         buttons = ttk.Frame(root)
         buttons.pack(side="bottom", fill="x", padx=12, pady=12)
@@ -208,6 +269,10 @@ class App:
         image = self.image.get().strip()
         return not image or same_file(image, self.info.get("image"))
 
+    def toggle_dark(self):
+        apply_theme(self.root, self.dark.get(), self.log)
+        save_settings(dark=self.dark.get())
+
     def toggle_log(self):
         if self.log_shown.get():
             self.log.pack(fill="both", expand=True, padx=12, pady=(0, 6))
@@ -239,7 +304,7 @@ class App:
             return self.fail(f"Not enough free space: about {need} GB is needed while converting "
                              f"({free:.1f} GB free).")
         for s in pipeline.STEPS:
-            self.marks[s].config(text="○", foreground="")
+            self.marks[s].config(text="○", style="TLabel")
         self.convert_btn.config(state="disabled")
         self.play_btn.config(state="disabled")
         self.bar.config(value=0)
@@ -273,18 +338,18 @@ class App:
                     _, st, frac, msg = ev
                     i = pipeline.STEPS.index(st)
                     for s in pipeline.STEPS[:i]:
-                        self.marks[s].config(text="✔", foreground="#2a8a2a")
-                    self.marks[st].config(text="►", foreground="#c07000")
+                        self.marks[s].config(text="✔", style="Ok.TLabel")
+                    self.marks[st].config(text="►", style="Busy.TLabel")
                     self.bar.config(value=frac)
                     self.status.config(text=msg + (f"  {int(frac * 100)}%" if 0 < frac < 1 else ""))
                 elif ev[0] == "log":
                     self.add_log(ev[1])
                 elif ev[0] == "done":
                     for s in pipeline.STEPS:
-                        self.marks[s].config(text="✔", foreground="#2a8a2a")
+                        self.marks[s].config(text="✔", style="Ok.TLabel")
                     self.game = ev[1]
                     self.bar.config(value=1)
-                    self.status.config(text="Done! Press Play.", foreground="#555")
+                    self.status.config(text="Done! Press Play.", style="Muted.TLabel")
                     self.info = pipeline.install_info(self.install.get().strip())
                     self.convert_btn.config(text="Update" if self.is_update() else "Convert")
                     self.convert_btn.config(state="normal")
@@ -315,14 +380,14 @@ class App:
                     self.steam_btn.config(state="normal")
                     if ev[1]:
                         self.status.config(text="Added to your Steam library, with artwork. Start Steam to see it.",
-                                           foreground="#555")
+                                           style="Muted.TLabel")
                         self.add_log("steam: " + ", ".join(ev[2]))
                     else:
                         self.fail(ev[2])
                 elif ev[0] == "error":
                     for s, m in self.marks.items():
                         if m.cget("text") == "►":
-                            m.config(text="✖", foreground="#c02020")
+                            m.config(text="✖", style="Err.TLabel")
                     self.convert_btn.config(state="normal")
                     self.fail(ev[1][:1].upper() + ev[1][1:])
         except queue.Empty:
@@ -330,9 +395,9 @@ class App:
         self.root.after(100, self.poll)
 
     def fail(self, msg):
-        self.status.config(text=msg, foreground="#c02020")
+        self.status.config(text=msg, style="Err.TLabel")
         self.add_log("error: " + msg)
-        self.root.after(8000, lambda: self.status.config(foreground="#555"))
+        self.root.after(8000, lambda: self.status.config(style="Muted.TLabel"))
 
     # ---------------- this app's own updates ----------------
 
@@ -380,7 +445,7 @@ class App:
                                 "Close Steam now? You can start it again right after."):
             return
         self.steam_btn.config(state="disabled")
-        self.status.config(text="Closing Steam…" if running else "Adding to Steam…", foreground="#555")
+        self.status.config(text="Closing Steam…" if running else "Adding to Steam…", style="Muted.TLabel")
         game = self.game
 
         def work():

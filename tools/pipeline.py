@@ -197,6 +197,7 @@ def run(image, force=False, toolchain="auto", progress=None, log=print, paths=No
         try:
             zig_build.build_game(paths.generated, paths.runtime_lib, out, zig_build.game_link_args(paths.lib_dir),
                                  zig=paths.zig, cache_dir=os.path.join(paths.build, "cache") if paths.install else None,
+                                 log=log,
                                  progress=lambda d, t, label: step("build", d / max(t, 1),
                                                                    "Linking" if label == "link" else
                                                                    f"Compiling ({d} of {t})"))
