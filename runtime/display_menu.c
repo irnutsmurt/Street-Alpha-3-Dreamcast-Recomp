@@ -27,7 +27,7 @@
 #define TEXT_ARENA_END 0x8C07C1D0u
 
 /* rows: the display options (or the cheats), then DEFAULT and EXIT */
-#define ROW_MAX ((OPT_COUNT > CHEAT_COUNT ? OPT_COUNT : CHEAT_COUNT) + 2)
+#define ROW_MAX (((int)OPT_COUNT > (int)CHEAT_COUNT ? (int)OPT_COUNT : (int)CHEAT_COUNT) + 2)
 
 /* which list the screen shows: set by Option Mode as it opens the screen */
 static int s_cheats;
