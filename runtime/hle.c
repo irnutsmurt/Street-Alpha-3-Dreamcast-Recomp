@@ -290,7 +290,9 @@ void hle_reset(void) {
 }
 
 void hle_init(const char *gdi_path) {
-    if (!gdi_open(gdi_path)) fatal("cannot open disc image %s", gdi_path);
+    if (!gdi_open(gdi_path))
+        fatal("cannot open disc image %s (moved or deleted? Open the setup app and convert again from your disc image)",
+              gdi_path);
     hle_reset();
 }
 

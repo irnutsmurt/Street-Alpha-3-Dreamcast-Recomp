@@ -66,6 +66,10 @@ Vulkan graphics driver: on Windows, Windows 10 or 11; on Linux, glibc 2.31 or
 newer (Ubuntu 20.04, Debian 11, Fedora 32 or later). `SFA3-Setup --convert IMAGE FOLDER` does the
 same without the window.
 
+The install keeps its own compact copy of the game's data (about 700 MB:
+the disc's files, without the empty part of the disc), so afterwards your disc
+image can be moved or deleted.
+
 **Updating:** run the setup app again. It finds your install and offers
 **Update**: no disc image needed, about 20 seconds, and your saves and
 settings stay as they are. The app also tells you when a new version of

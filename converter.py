@@ -124,6 +124,40 @@ def apply_theme(root, dark, log=None):
             pass
 
 
+class Spinner:
+    """A small turning arc next to the step that is running (drawn, so it looks the same everywhere)."""
+    SIZE = 14
+
+    def __init__(self, parent, dark):
+        self.canvas = tk.Canvas(parent, width=self.SIZE, height=self.SIZE, highlightthickness=0, borderwidth=0)
+        self.arc = self.canvas.create_arc(2, 2, self.SIZE - 2, self.SIZE - 2, start=0, extent=270, style="arc",
+                                          width=2)
+        self.angle, self.running = 0, False
+        self.recolor(dark)
+
+    def recolor(self, dark):
+        c = PALETTES["dark" if dark else "light"]
+        self.canvas.configure(background=c["bg"])
+        self.canvas.itemconfigure(self.arc, outline=c["busy"])
+
+    def show(self, row):
+        self.canvas.grid(row=row, column=0, padx=(10, 4), pady=1)
+        if not self.running:
+            self.running = True
+            self.turn()
+
+    def hide(self):
+        self.running = False
+        self.canvas.grid_remove()
+
+    def turn(self):
+        if not self.running:
+            return
+        self.angle = (self.angle - 30) % 360
+        self.canvas.itemconfigure(self.arc, start=self.angle)
+        self.canvas.after(70, self.turn)
+
+
 def default_install():
     if os.name == "nt":
         base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
@@ -185,6 +219,8 @@ class App:
             mark.grid(row=i, column=0, padx=(10, 4), pady=1)
             ttk.Label(steps, text=pipeline.STEP_NAMES[s]).grid(row=i, column=1, sticky="w")
             self.marks[s] = mark
+        self.spinner = Spinner(steps, self.dark.get())
+        self.current = None  # the step running
         self.bar = ttk.Progressbar(steps, maximum=1.0)
         self.bar.grid(row=len(pipeline.STEPS), column=0, columnspan=2, sticky="ew", padx=10, pady=(8, 2))
         steps.columnconfigure(1, weight=1)
@@ -271,6 +307,7 @@ class App:
 
     def toggle_dark(self):
         apply_theme(self.root, self.dark.get(), self.log)
+        self.spinner.recolor(self.dark.get())
         save_settings(dark=self.dark.get())
 
     def toggle_log(self):
@@ -339,12 +376,17 @@ class App:
                     i = pipeline.STEPS.index(st)
                     for s in pipeline.STEPS[:i]:
                         self.marks[s].config(text="✔", style="Ok.TLabel")
-                    self.marks[st].config(text="►", style="Busy.TLabel")
+                    self.marks[st].config(text="", style="TLabel")  # the spinner turns in its place
+                    if self.current != st:
+                        self.current = st
+                        self.spinner.show(i)
                     self.bar.config(value=frac)
                     self.status.config(text=msg + (f"  {int(frac * 100)}%" if 0 < frac < 1 else ""))
                 elif ev[0] == "log":
                     self.add_log(ev[1])
                 elif ev[0] == "done":
+                    self.spinner.hide()
+                    self.current = None
                     for s in pipeline.STEPS:
                         self.marks[s].config(text="✔", style="Ok.TLabel")
                     self.game = ev[1]
@@ -385,9 +427,10 @@ class App:
                     else:
                         self.fail(ev[2])
                 elif ev[0] == "error":
-                    for s, m in self.marks.items():
-                        if m.cget("text") == "►":
-                            m.config(text="✖", style="Err.TLabel")
+                    self.spinner.hide()
+                    if self.current:
+                        self.marks[self.current].config(text="✖", style="Err.TLabel")
+                    self.current = None
                     self.convert_btn.config(state="normal")
                     self.fail(ev[1][:1].upper() + ev[1][1:])
         except queue.Empty:
