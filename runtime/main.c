@@ -4,6 +4,8 @@
 #include <signal.h>
 #include <stdarg.h>
 #ifdef _WIN32
+__declspec(dllimport) void *__stdcall GetCurrentProcess(void);
+__declspec(dllimport) int __stdcall TerminateProcess(void *process, unsigned code);
 /* no backtrace(): the guest call stack in crash logs is Linux-only for now */
 static int backtrace(void **frames, int n) { (void)frames; (void)n; return 0; }
 static char **backtrace_symbols(void *const *frames, int n) { (void)frames; (void)n; return NULL; }
@@ -312,6 +314,12 @@ void video_vblank(void) {
     if (g_quit_requested) {
         netplay_shutdown();
         maple_flush_saves();
+#ifdef _WIN32
+        /* exit() from inside the running game (on a fiber, with the graphics
+         * driver's and SDL's threads live) can hang in DLL shutdown on
+         * Windows; saves and the log are written, so just end the process */
+        TerminateProcess(GetCurrentProcess(), 0);
+#endif
         exit(0);
     }
 }
