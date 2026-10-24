@@ -20,10 +20,13 @@ sys.path.insert(0, os.path.join(ROOT, "tools"))
 sys.path.insert(0, os.path.join(ROOT, "tools", "recomp"))
 
 import pipeline  # noqa: E402
+import self_update  # noqa: E402
 import shortcuts  # noqa: E402
+from version import VERSION  # noqa: E402
 
 TITLE = "Street Fighter Alpha 3 — PC port setup"
 NEEDED_GB = 4  # unpacked image + extracted disc + build work files, at most
+UPDATE_GB = 1.5  # an update: extracted disc + generated C
 
 
 def default_install():
@@ -34,12 +37,13 @@ def default_install():
 
 
 class App:
-    def __init__(self, root):
+    def __init__(self, root, after_update=None):
         self.root = root
         self.events = queue.Queue()
         self.worker = None
         self.game = None
-        root.title(TITLE)
+        self.info = None  # the install's install.json
+        root.title(f"{TITLE} {VERSION}")
         root.minsize(620, 520)
         style = ttk.Style(root)
         if os.name != "nt" and "clam" in style.theme_names():
@@ -48,8 +52,16 @@ class App:
 
         ttk.Label(root, text="Street Fighter Alpha 3", font=("TkDefaultFont", 16, "bold")).pack(anchor="w", padx=12,
                                                                                                pady=(14, 0))
-        ttk.Label(root, text="Builds the native PC version from your own Dreamcast disc. Nothing from the game "
-                             "is included with this app.", wraplength=590, foreground="#555").pack(anchor="w", **pad)
+        self.subtitle = ttk.Label(root, text="Builds the native PC version from your own Dreamcast disc. Nothing from "
+                                             "the game is included with this app.", wraplength=590, foreground="#555")
+        self.subtitle.pack(anchor="w", **pad)
+
+        self.update_bar = ttk.Frame(root)  # shown when a newer version of this app is out
+        self.update_label = ttk.Label(self.update_bar, foreground="#1a5fb4")
+        self.update_label.pack(side="left")
+        self.update_btn = ttk.Button(self.update_bar, text="Get it", command=self.get_new_app)
+        self.update_btn.pack(side="left", padx=8)
+        self.new_app = None
 
         form = ttk.Frame(root)
         form.pack(fill="x", **pad)
@@ -61,7 +73,7 @@ class App:
         ttk.Label(form, text="GDI, CUE/BIN (Redump) or CHD of Street Fighter Alpha 3 (USA)", foreground="#777").grid(
             row=1, column=1, sticky="w", padx=6)
         ttk.Label(form, text="Install to").grid(row=2, column=0, sticky="w", pady=(8, 0))
-        self.install = tk.StringVar(value=default_install())
+        self.install = tk.StringVar(value=(after_update or {}).get("install") or default_install())
         ttk.Entry(form, textvariable=self.install).grid(row=2, column=1, sticky="ew", padx=6, pady=(8, 0))
         ttk.Button(form, text="Browse…", command=self.pick_install).grid(row=2, column=2, pady=(8, 0))
         self.desktop = tk.BooleanVar(value=True)
@@ -79,7 +91,7 @@ class App:
         self.bar = ttk.Progressbar(steps, maximum=1.0)
         self.bar.grid(row=len(pipeline.STEPS), column=0, columnspan=2, sticky="ew", padx=10, pady=(8, 2))
         steps.columnconfigure(1, weight=1)
-        self.status = ttk.Label(steps, text="Ready.", foreground="#555")
+        self.status = ttk.Label(steps, text="Ready.", foreground="#555", wraplength=570)
         self.status.grid(row=len(pipeline.STEPS) + 1, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 8))
 
         self.log_shown = tk.BooleanVar(value=False)
@@ -99,6 +111,13 @@ class App:
         self.steam_btn.pack(side="left")
         self.root.after(100, self.poll)
         self.find_existing()
+        self.install.trace_add("write", lambda *_: self.find_existing())
+        if after_update:  # this is a new version the old one just downloaded
+            threading.Thread(target=lambda: self_update.remove_old(after_update.get("old")), daemon=True).start()
+            if self.info and self.info.get("gdi"):
+                self.root.after(500, self.start)  # bring the game up to this version straight away
+        elif self_update.current_folder():
+            threading.Thread(target=self.check_for_app_update, daemon=True).start()
 
     # ---------------- inputs ----------------
 
@@ -114,13 +133,23 @@ class App:
             self.install.set(os.path.join(p, "SFA3") if os.listdir(p) and os.path.basename(p) != "SFA3" else p)
 
     def find_existing(self):
-        exe = os.path.join(self.install.get(), pipeline.exe_name("sfa3"))
-        if os.path.exists(exe):
-            self.game = exe
-            self.play_btn.config(state="normal")
-            self.folder_btn.config(state="normal")
-            self.steam_btn.config(state="normal")
-            self.status.config(text="Already installed. Convert again to rebuild it.")
+        install = self.install.get().strip()
+        exe = os.path.join(install, pipeline.exe_name("sfa3"))
+        self.info = pipeline.install_info(install) if os.path.exists(exe) else None
+        installed = os.path.exists(exe)
+        self.game = exe if installed else None
+        for b in (self.play_btn, self.folder_btn, self.steam_btn):
+            b.config(state="normal" if installed else "disabled")
+        can_update = bool(self.info and self.info.get("gdi"))
+        self.convert_btn.config(text="Update" if can_update else "Convert")
+        if not installed:
+            self.status.config(text="Ready.")
+        elif can_update:
+            built = self.info.get("version", "?")
+            self.status.config(text=f"Installed (version {built}). Update rebuilds it with version {VERSION}, "
+                                    "keeping your saves and settings. Choose a disc image only to convert from scratch.")
+        else:
+            self.status.config(text="Already installed. Choose your disc image and press Convert to rebuild it.")
 
     def toggle_log(self):
         if self.log_shown.get():
@@ -139,24 +168,26 @@ class App:
 
     def start(self):
         image, install = self.image.get().strip(), self.install.get().strip()
-        if not image:
+        update = not image and bool(self.info and self.info.get("gdi"))
+        if not image and not update:
             return self.fail("Choose your disc image first.")
-        if not os.path.exists(image):
+        if image and not os.path.exists(image):
             return self.fail("That disc image wasn't found.")
         try:
             os.makedirs(install, exist_ok=True)
         except OSError as e:
             return self.fail(f"Can't create the install folder ({e.strerror}).")
-        free = shutil.disk_usage(install).free / 2**30
-        if free < NEEDED_GB:
-            return self.fail(f"Not enough free space: about {NEEDED_GB} GB is needed while converting "
+        free, need = shutil.disk_usage(install).free / 2**30, UPDATE_GB if update else NEEDED_GB
+        if free < need:
+            return self.fail(f"Not enough free space: about {need} GB is needed while converting "
                              f"({free:.1f} GB free).")
         for s in pipeline.STEPS:
             self.marks[s].config(text="○", foreground="")
         self.convert_btn.config(state="disabled")
         self.play_btn.config(state="disabled")
         self.bar.config(value=0)
-        self.worker = threading.Thread(target=self.work, args=(image, install, self.desktop.get()), daemon=True)
+        self.worker = threading.Thread(target=self.work, args=(image or None, install, self.desktop.get()),
+                                       daemon=True)
         self.worker.start()
 
     def work(self, image, install, desktop):
@@ -164,11 +195,12 @@ class App:
             out = pipeline.run(image, progress=lambda st, f, m: self.events.put(("progress", st, f, m)),
                                log=lambda m: self.events.put(("log", m)),
                                paths=pipeline.Paths(install=install), toolchain="zig")
-            try:
-                made = shortcuts.create_shortcuts(out, self.icon_for(out), desktop=desktop)
-                self.events.put(("log", "shortcuts: " + ", ".join(made)))
-            except Exception as e:  # shortcuts are a convenience: never fail the install over them
-                self.events.put(("log", f"shortcuts: not created ({e})"))
+            if image is not None:  # an update keeps the shortcuts as the player left them
+                try:
+                    made = shortcuts.create_shortcuts(out, self.icon_for(out), desktop=desktop)
+                    self.events.put(("log", "shortcuts: " + ", ".join(made)))
+                except Exception as e:  # shortcuts are a convenience: never fail the install over them
+                    self.events.put(("log", f"shortcuts: not created ({e})"))
             self.events.put(("done", out))
         except pipeline.SetupError as e:
             self.events.put(("error", str(e)))
@@ -194,11 +226,31 @@ class App:
                         self.marks[s].config(text="✔", foreground="#2a8a2a")
                     self.game = ev[1]
                     self.bar.config(value=1)
-                    self.status.config(text="Done! Press Play.")
+                    self.status.config(text="Done! Press Play.", foreground="#555")
+                    self.info = pipeline.install_info(self.install.get().strip())
+                    self.convert_btn.config(text="Update" if self.info and self.info.get("gdi") else "Convert")
                     self.convert_btn.config(state="normal")
                     self.play_btn.config(state="normal")
                     self.folder_btn.config(state="normal")
                     self.steam_btn.config(state="normal")
+                elif ev[0] == "app-update":
+                    self.new_app = ev[1]
+                    self.update_label.config(text=f"Version {ev[1][0]} of this app is available.")
+                    self.update_bar.pack(after=self.subtitle, anchor="w", padx=12, pady=(0, 4))
+                elif ev[0] == "app-progress":
+                    self.update_label.config(text=ev[1])
+                elif ev[0] == "app-ready":
+                    try:
+                        subprocess.Popen([ev[1], "--after-update", self_update.current_folder(),
+                                          self.install.get().strip()], cwd=os.path.dirname(ev[1]))
+                    except OSError as e:
+                        self.fail(f"Couldn't start the new version ({e.strerror}).")
+                        continue
+                    self.root.destroy()
+                    return
+                elif ev[0] == "app-failed":
+                    self.update_btn.config(state="normal")
+                    self.update_label.config(text=ev[1])
                 elif ev[0] == "steam":
                     self.steam_btn.config(state="normal")
                     if ev[1]:
@@ -221,6 +273,33 @@ class App:
         self.status.config(text=msg, foreground="#c02020")
         self.add_log("error: " + msg)
         self.root.after(8000, lambda: self.status.config(foreground="#555"))
+
+    # ---------------- this app's own updates ----------------
+
+    def check_for_app_update(self):
+        try:
+            new = self_update.latest()
+        except Exception:
+            return  # offline, or GitHub unreachable: try again next time
+        if new and self_update.parse(new[0]) > self_update.parse(VERSION):
+            self.events.put(("app-update", new))
+
+    def get_new_app(self):
+        if not self.new_app or (self.worker and self.worker.is_alive()):
+            return
+        self.update_btn.config(state="disabled")
+        version, url = self.new_app
+
+        def work():
+            try:
+                exe = self_update.download_and_unpack(
+                    url, version, os.path.dirname(self_update.current_folder()),
+                    progress=lambda d, t: self.events.put(("app-progress", f"Downloading version {version}… "
+                                                           f"{d * 100 // t if t else d >> 20}{'%' if t else ' MB'}")))
+                self.events.put(("app-ready", exe))
+            except Exception as e:
+                self.events.put(("app-failed", f"The download failed ({e}). Try again later."))
+        threading.Thread(target=work, daemon=True).start()
 
     # ---------------- after ----------------
 
@@ -269,7 +348,8 @@ class App:
 
 
 def convert_headless(image, install):
-    """SFA3-Setup --convert IMAGE FOLDER: the same conversion without the window."""
+    """SFA3-Setup --convert IMAGE FOLDER: the same conversion without the window.
+    SFA3-Setup --update FOLDER: update an install (image None)."""
     def show(step, frac, msg):
         print(f"\r[{pipeline.STEPS.index(step) + 1}/{len(pipeline.STEPS)}] {msg} {int(frac * 100)}%   ",
               end="", flush=True)
@@ -284,8 +364,13 @@ def convert_headless(image, install):
 def main():
     if len(sys.argv) == 4 and sys.argv[1] == "--convert":
         return convert_headless(os.path.abspath(sys.argv[2]), os.path.abspath(sys.argv[3]))
+    if len(sys.argv) == 3 and sys.argv[1] == "--update":
+        return convert_headless(None, os.path.abspath(sys.argv[2]))
+    after = None
+    if len(sys.argv) == 4 and sys.argv[1] == "--after-update":  # started by the previous version
+        after = {"old": sys.argv[2], "install": sys.argv[3]}
     root = tk.Tk()
-    App(root)
+    App(root, after_update=after)
     root.mainloop()
 
 

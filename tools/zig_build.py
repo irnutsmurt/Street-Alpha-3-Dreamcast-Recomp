@@ -74,8 +74,9 @@ def _compile_all(zig, jobs, progress, label, platform=HOST):
     done, total, errors = 0, len(jobs), []
 
     def one(job):
-        src, obj, flags = job
-        if os.path.exists(obj) and os.path.getmtime(obj) >= os.path.getmtime(src):
+        src, obj, flags = job[:3]
+        cached = len(job) > 3 and job[3]  # obj is named by a fingerprint of src + flags: existing means current
+        if os.path.exists(obj) and (cached or os.path.getmtime(obj) >= os.path.getmtime(src)):
             return src, 0, ""  # up to date
         r = _run([zig, "cc", "-c", *target(platform), *flags, src, "-o", obj], capture_output=True, text=True)
         return src, r.returncode, r.stderr
@@ -217,20 +218,36 @@ def game_link_args(lib_dir, platform=HOST):
 
 
 def build_game(gen_dir, runtime_lib, out_exe, libs, zig=None, progress=None, strip=True, extra_cflags=(),
-               platform=HOST):
+               platform=HOST, cache_dir=None):
     """Compile the recompiled C in gen_dir (its sources.txt) and link it with the
-    runtime library. libs: game_link_args()."""
+    runtime library. libs: game_link_args().
+    cache_dir: keep the compiled objects there, each named by a fingerprint of its
+    source, the flags and the compiler, so an update only compiles what changed
+    (usually nothing: most updates only bring a new runtime library) and relinks."""
+    import hashlib
     zig = zig or find_zig()
     if not zig:
         raise BuildError("the bundled compiler (zig) is missing")
     if not os.path.exists(runtime_lib):
         raise BuildError(f"the runtime library is missing: {runtime_lib}")
     names = open(os.path.join(gen_dir, "sources.txt")).read().split()
-    obj_dir = os.path.join(os.path.dirname(out_exe), "obj")
+    obj_dir = cache_dir or os.path.join(os.path.dirname(out_exe), "obj")
     os.makedirs(obj_dir, exist_ok=True)
     inc = ["-w", "-I" + gen_dir, "-I" + os.path.join(ROOT, "runtime")]
-    jobs = [(os.path.join(gen_dir, n), os.path.join(obj_dir, n[:-2] + ".o"), CFLAGS + list(extra_cflags) + inc)
-            for n in names]
+    flags = CFLAGS + list(extra_cflags) + inc
+    jobs = []
+    for n in names:
+        src = os.path.join(gen_dir, n)
+        if cache_dir:
+            h = hashlib.sha1()
+            for part in (os.path.basename(zig), os.path.dirname(zig), TARGETS[platform], " ".join(CFLAGS + list(extra_cflags))):
+                h.update(part.encode() + b"\0")
+            with open(src, "rb") as f:
+                h.update(f.read())
+            h.update(_header_fingerprint())
+            jobs.append((src, os.path.join(obj_dir, f"{n[:-2]}-{h.hexdigest()[:16]}.o"), flags, True))
+        else:
+            jobs.append((src, os.path.join(obj_dir, n[:-2] + ".o"), flags))
     _compile_all(zig, jobs, progress, "game", platform)
     if progress:
         progress(0, 1, "link")
@@ -240,6 +257,29 @@ def build_game(gen_dir, runtime_lib, out_exe, libs, zig=None, progress=None, str
     r = _run(cmd, capture_output=True, text=True)
     if r.returncode:
         raise BuildError("linking failed:\n" + r.stderr[-3000:])
+    if cache_dir:  # drop objects this build no longer uses
+        used = {os.path.basename(j[1]) for j in jobs}
+        for f in os.listdir(cache_dir):
+            if f.endswith(".o") and f not in used:
+                os.remove(os.path.join(cache_dir, f))
     if progress:
         progress(1, 1, "link")
     return out_exe
+
+
+_HEADERS = None
+
+
+def _header_fingerprint():
+    """The runtime headers the generated C includes: a change to them recompiles everything."""
+    global _HEADERS
+    if _HEADERS is None:
+        import hashlib
+        h = hashlib.sha1()
+        rt = os.path.join(ROOT, "runtime")
+        for name in sorted(os.listdir(rt)):
+            if name.endswith(".h"):
+                with open(os.path.join(rt, name), "rb") as f:
+                    h.update(name.encode() + b"\0" + f.read())
+        _HEADERS = h.digest()
+    return _HEADERS

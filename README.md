@@ -66,6 +66,11 @@ Vulkan graphics driver: on Windows, Windows 10 or 11; on Linux, glibc 2.31 or
 newer (Ubuntu 20.04, Debian 11, Fedora 32 or later). `SFA3-Setup --convert IMAGE FOLDER` does the
 same without the window.
 
+**Updating:** run the setup app again. It finds your install and offers
+**Update**: no disc image needed, about 20 seconds, and your saves and
+settings stay as they are. The app also tells you when a new version of
+itself is out (**Get it** downloads it and updates the game right after).
+
 When it's done, the app has added the game to your Start Menu (Windows) or app
 menu (Linux), and to your desktop if you left that ticked. **Add to Steam**
 puts it in your Steam library as a non-Steam game, so it works from Big
