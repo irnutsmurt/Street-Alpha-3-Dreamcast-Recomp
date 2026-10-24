@@ -205,8 +205,8 @@ static void redraw_cheats(void) {
     int px, py, pw, ph;
     panel("CHEATS", &px, &py, &pw, &ph);
     for (int r = 0; r < HROW_COUNT; r++) {
-        int sel = r == s_hsel, y = py + 26 + r * 13 + (r >= HROW_DEFAULT ? 4 : 0);
-        if (sel) fill(px + 4, y - 3, pw - 8, 13, RGBA(200, 60, 40, 255));
+        int sel = r == s_hsel, y = py + 26 + r * 12 + (r >= HROW_DEFAULT ? 4 : 0);
+        if (sel) fill(px + 4, y - 3, pw - 8, 12, RGBA(200, 60, 40, 255));
         uint32_t c = sel ? RGBA(255, 255, 255, 255) : RGBA(180, 190, 230, 255);
         if (sel) text(px + 8, y, ">", c);
         text(px + 18, y, r == HROW_DEFAULT ? "DEFAULT" : r == HROW_BACK ? "BACK" : cheat_label(r), c);
@@ -219,7 +219,7 @@ static void redraw_cheats(void) {
     }
     static const char *const notes[] = {"AGAINST THE CPU ONLY", "FINAL BISON: HOLD START ON M.BISON"};
     for (int k = 0; k < 2; k++)
-        text(MENU_W / 2 - text_width(notes[k]) / 2, py + 26 + HROW_COUNT * 13 + 14 + k * 11, notes[k],
+        text(MENU_W / 2 - text_width(notes[k]) / 2, py + 26 + HROW_COUNT * 12 + 6 + k * 9, notes[k],
              RGBA(150, 160, 200, 255));
     const char *help = "ENTER: CHANGE   ESC: BACK";
     text(MENU_W / 2 - text_width(help) / 2, py + ph - 11, help, RGBA(150, 160, 200, 255));

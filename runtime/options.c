@@ -196,7 +196,7 @@ void option_change(int i, int dir) {
     case OPT_PICTURE: g_settings.picture = wrap(g_settings.picture, dir, 0, 2); break;
     case OPT_COLOR: g_settings.color = wrap(g_settings.color, dir, 0, 2); break;
     case OPT_RENDER_RES:
-        g_settings.scale = wrap(g_settings.scale, dir, 1, 4);
+        g_settings.scale = wrap(g_settings.scale, dir, 1, 6);
         renderer_settings_changed();
         break;
     case OPT_VSYNC:

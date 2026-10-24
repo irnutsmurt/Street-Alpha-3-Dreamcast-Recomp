@@ -69,7 +69,7 @@ def _run(cmd, **kw):
     return subprocess.run(cmd, **kw)
 
 
-def _compile_all(zig, jobs, progress, label, platform=HOST):
+def _compile_all(zig, jobs, progress, label, platform=HOST, log=None):
     """jobs: (source, object, flags[, cached]); progress(done, total, label) counts only
     the sources that need compiling. Returns how many did."""
     def current(job):
@@ -85,9 +85,15 @@ def _compile_all(zig, jobs, progress, label, platform=HOST):
         r = _run([zig, "cc", "-c", *target(platform), *flags, src, "-o", obj], capture_output=True, text=True)
         return src, r.returncode, r.stderr
 
+    if log and len(todo) < len(jobs):
+        log(f"{len(jobs) - len(todo)} of {len(jobs)} files unchanged since the last build: reused")
+    if log and todo:
+        log(f"compiling {len(todo)} files, {_jobs()} at a time")
     with cf.ThreadPoolExecutor(_jobs()) as ex:
         for src, rc, err in ex.map(one, todo):
             done += 1
+            if log:
+                log(f"{'FAILED' if rc else 'compiled'} {os.path.basename(src)} ({done} of {total})")
             if rc:
                 errors.append(f"{os.path.basename(src)}:\n{err[-2000:]}")
             if progress:
@@ -253,9 +259,10 @@ def build_game(gen_dir, runtime_lib, out_exe, libs, zig=None, progress=None, log
             jobs.append((src, os.path.join(obj_dir, f"{n[:-2]}-{h.hexdigest()[:16]}.o"), flags, True))
         else:
             jobs.append((src, os.path.join(obj_dir, n[:-2] + ".o"), flags))
-    compiled = _compile_all(zig, jobs, progress, "game", platform)
+    compiled = _compile_all(zig, jobs, progress, "game", platform, log=log)
     if log:
         log(f"game code: {compiled} of {len(jobs)} files compiled, {len(jobs) - compiled} reused")
+        log(f"linking {os.path.basename(out_exe)} (the game code and the port's runtime)...")
     if progress:
         progress(0, 1, "link")
     cmd = [zig, "cc", *target(platform), "-o", out_exe, *[j[1] for j in jobs], runtime_lib, *libs]
@@ -269,6 +276,8 @@ def build_game(gen_dir, runtime_lib, out_exe, libs, zig=None, progress=None, log
         for f in os.listdir(cache_dir):
             if f.endswith(".o") and f not in used:
                 os.remove(os.path.join(cache_dir, f))
+    if log:
+        log(f"linked: {out_exe} ({os.path.getsize(out_exe) // (1 << 20)} MB)")
     if progress:
         progress(1, 1, "link")
     return out_exe

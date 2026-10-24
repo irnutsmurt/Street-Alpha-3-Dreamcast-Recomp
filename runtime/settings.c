@@ -31,7 +31,7 @@ static const struct {
     K(fs_refresh, "SFA3_FS_REFRESH", 0, 1000, "exclusive fullscreen refresh rate in Hz (0 = desktop)"),
     K(picture, "SFA3_PICTURE", 0, 2, "0 = 4:3, 1 = stretch to fill, 2 = integer scale (pixel perfect)"),
     K(color, "SFA3_COLOR", 0, 2, "0 = standard (VGA cable), 1 = TV levels (as on a television / in videos), 2 = vivid"),
-    K(scale, "SFA3_SCALE", 1, 4, "internal render resolution multiplier (1 = 640x480, 3 = 1920x1440)"),
+    K(scale, "SFA3_SCALE", 1, 6, "internal render resolution multiplier (1 = 640x480, 3 = 1920x1440, 5 = 3200x2400 for 4K)"),
     K(vsync, "SFA3_VSYNC", 0, 1, "1 = wait for the display refresh (vsync)"),
     K(scanlines, "SFA3_SCANLINES", 0, 2, "CRT look: 0 off, 1 scanlines, 2 PVM monitor"),
     K(scanline_strength, "SFA3_SCANLINE_STRENGTH", 10, 100, "CRT look strength in percent (10-100)"),

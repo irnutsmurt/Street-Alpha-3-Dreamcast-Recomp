@@ -92,7 +92,11 @@ def fn_extent(fn):
     return min(hi - fn.entry, 4096) if hi > fn.entry else 2
 
 
-def run(disc_dir, out_dir):
+def run(disc_dir, out_dir, report=None, progress=None):
+    """report(text): what it is doing, as it goes (default: printed).
+    progress(done, total): over the overlay files, then the main program."""
+    report = report or (lambda m: print("      " + m))
+    progress = progress or (lambda d, t: None)
     os.makedirs(out_dir, exist_ok=True)
     data = open(os.path.join(disc_dir, "1ST_READ.BIN"), "rb").read()
     img = Image(data, MAIN_BASE)
@@ -104,7 +108,8 @@ def run(disc_dir, out_dir):
     ovl_funcs = []      # (addr, cname, sig bytes)
     main_refs = set()
     ovl_parts = []
-    for fname in ovl_files:
+    steps = len(ovl_files) + 3  # the overlays, the main program, writing the C, the sound driver
+    for i, fname in enumerate(ovl_files):
         tag = fname[:-4]
         odata = open(os.path.join(disc_dir, fname), "rb").read()
         # PLnnA/B/C are linked for the player slots at 0x14000-byte intervals;
@@ -133,12 +138,18 @@ def run(disc_dir, out_dir):
             ovl_parts.append((names[a], gen_function(f, oimg, names)))
             sig = odata[a - base:a - base + fn_extent(f)]
             ovl_funcs.append((a, names[a], sig))
-    print(f"      overlays: {len(ovl_files)} files, {len(ovl_funcs)} functions")
+        what = f"character {fname[2:4]} part {fname[4]}" if fname.startswith("PL") else f"ending {fname[3:5]}"
+        report(f"{fname} ({what}): {len(good)} functions")
+        progress(i + 1, steps)
+    report(f"overlays: {len(ovl_files)} files, {len(ovl_funcs)} functions")
+    report("1ST_READ.BIN (the main program): finding its functions...")
 
     # --- main program ---
     good, names = recompile_image(img, [MAIN_BASE, 0x8C128BD4] + sorted(main_refs) + extra_entries(),
                                   "main")
-    print(f"      main: {len(good)} functions")
+    report(f"1ST_READ.BIN: {len(good)} functions")
+    progress(len(ovl_files) + 1, steps)
+    report("writing the C code...")
 
     all_names = set(names.values()) | {c for c, _ in ovl_parts}
     protos = ["#pragma once", '#include "cpu.h"']
@@ -195,11 +206,14 @@ def run(disc_dir, out_dir):
     write_if_changed(os.path.join(out_dir, "dispatch.c"), "\n".join(disp))
     files.append("dispatch.c")
 
+    report(f"wrote {len(files)} C files")
+    progress(len(ovl_files) + 2, steps)
     # ARM7 sound driver
     import arm
     drv = open(os.path.join(disc_dir, "MANATEE.DRV"), "rb").read()
     arm_c, n_arm = arm.generate(drv)
     write_if_changed(os.path.join(out_dir, "arm_code.c"), arm_c)
     files.append("arm_code.c")
-    print(f"      sound driver: {n_arm} ARM instructions")
+    report(f"MANATEE.DRV (the sound driver): {n_arm} ARM instructions")
+    progress(steps, steps)
     write_if_changed(os.path.join(out_dir, "sources.txt"), "\n".join(files) + "\n")
