@@ -220,9 +220,7 @@ def run(image, force=False, toolchain="auto", progress=None, log=print, paths=No
             zig_build.build_game(paths.generated, paths.runtime_lib, out, zig_build.game_link_args(paths.lib_dir),
                                  zig=paths.zig, cache_dir=os.path.join(paths.build, "cache") if paths.install else None,
                                  log=lambda m: log("build: " + m),
-                                 progress=lambda d, t, label: step("build", d / max(t, 1),
-                                                                   "Linking" if label == "link" else
-                                                                   f"Compiling ({d} of {t})"))
+                                 progress=lambda frac, msg: step("build", frac, msg))
         except zig_build.BuildError as e:
             if os.path.exists(old) and not os.path.exists(out):
                 os.replace(old, out)  # keep the game that was there

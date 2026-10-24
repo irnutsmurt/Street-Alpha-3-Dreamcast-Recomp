@@ -69,16 +69,21 @@ def _run(cmd, **kw):
     return subprocess.run(cmd, **kw)
 
 
-def _compile_all(zig, jobs, progress, label, platform=HOST, log=None):
-    """jobs: (source, object, flags[, cached]); progress(done, total, label) counts only
-    the sources that need compiling. Returns how many did."""
-    def current(job):
-        src, obj = job[:2]
-        cached = len(job) > 3 and job[3]  # obj is named by a fingerprint of src + flags: existing means current
-        return os.path.exists(obj) and (cached or os.path.getmtime(obj) >= os.path.getmtime(src))
+def _current(job):
+    src, obj = job[:2]
+    cached = len(job) > 3 and job[3]  # obj is named by a fingerprint of src + flags: existing means current
+    return os.path.exists(obj) and (cached or os.path.getmtime(obj) >= os.path.getmtime(src))
 
-    todo = [j for j in jobs if not current(j)]
+
+def _compile_all(zig, jobs, progress, label, platform=HOST, log=None):
+    """jobs: (source, object, flags[, cached]); progress(done, total, label, fraction)
+    counts only the sources that need compiling, the fraction by their size (a big
+    file takes longer). Returns how many did."""
+    # the biggest first: the largest (dispatch.c, an eighth of the game code) would
+    # otherwise start last and keep the build waiting on it alone for a minute
+    todo = sorted((j for j in jobs if not _current(j)), key=lambda j: -os.path.getsize(j[0]))
     done, total, errors = 0, len(todo), []
+    size_done, size_total = 0, sum(os.path.getsize(j[0]) for j in todo) or 1
 
     def one(job):
         src, obj, flags = job[:3]
@@ -90,14 +95,16 @@ def _compile_all(zig, jobs, progress, label, platform=HOST, log=None):
     if log and todo:
         log(f"compiling {len(todo)} files, {_jobs()} at a time")
     with cf.ThreadPoolExecutor(_jobs()) as ex:
-        for src, rc, err in ex.map(one, todo):
+        for fut in cf.as_completed([ex.submit(one, j) for j in todo]):  # as each one finishes
+            src, rc, err = fut.result()
             done += 1
+            size_done += os.path.getsize(src)
             if log:
                 log(f"{'FAILED' if rc else 'compiled'} {os.path.basename(src)} ({done} of {total})")
             if rc:
                 errors.append(f"{os.path.basename(src)}:\n{err[-2000:]}")
             if progress:
-                progress(done, total, label)
+                progress(done, total, label, size_done / size_total)
     if errors:
         raise BuildError("compiling failed:\n" + "\n".join(errors[:3]))
     return total
@@ -231,7 +238,8 @@ def game_link_args(lib_dir, platform=HOST):
 def build_game(gen_dir, runtime_lib, out_exe, libs, zig=None, progress=None, log=None, strip=True, extra_cflags=(),
                platform=HOST, cache_dir=None):
     """Compile the recompiled C in gen_dir (its sources.txt) and link it with the
-    runtime library. libs: game_link_args().
+    runtime library. libs: game_link_args(). progress(fraction, message): the whole
+    build as one fraction.
     cache_dir: keep the compiled objects there, each named by a fingerprint of its
     source, the flags and the compiler, so an update only compiles what changed
     (usually nothing: most updates only bring a new runtime library) and relinks."""
@@ -259,27 +267,60 @@ def build_game(gen_dir, runtime_lib, out_exe, libs, zig=None, progress=None, log
             jobs.append((src, os.path.join(obj_dir, f"{n[:-2]}-{h.hexdigest()[:16]}.o"), flags, True))
         else:
             jobs.append((src, os.path.join(obj_dir, n[:-2] + ".o"), flags))
-    compiled = _compile_all(zig, jobs, progress, "game", platform, log=log)
+    # one bar for the whole build: compiling, then linking, weighted by how long
+    # each took last time (linking is a single step: it moves on that estimate)
+    import json
+    import time
+    timings_path = os.path.join(obj_dir, "timings.json")
+    try:
+        timings = json.load(open(timings_path))
+    except (OSError, ValueError):
+        timings = {}
+    per_file, link_est = float(timings.get("per_file", 1.0)), float(timings.get("link", 15.0))
+    todo = sum(1 for j in jobs if not _current(j))
+    compile_est = todo * per_file
+    share = compile_est / (compile_est + link_est) if compile_est else 0.0
+
+    def report(frac, msg):
+        if progress:
+            progress(min(max(frac, 0.0), 1.0), msg)
+
+    t0 = time.monotonic()
+    compiled = _compile_all(zig, jobs, lambda d, t, _l, f: report(share * f, f"Compiling ({d} of {t})"),
+                            "game", platform, log=log)
+    if compiled:
+        timings["per_file"] = (time.monotonic() - t0) / compiled
     if log:
         log(f"game code: {compiled} of {len(jobs)} files compiled, {len(jobs) - compiled} reused")
         log(f"linking {os.path.basename(out_exe)} (the game code and the port's runtime)...")
-    if progress:
-        progress(0, 1, "link")
+    report(share, "Linking")
     cmd = [zig, "cc", *target(platform), "-o", out_exe, *[j[1] for j in jobs], runtime_lib, *libs]
     if strip:
         cmd.append("-s")
-    r = _run(cmd, capture_output=True, text=True)
-    if r.returncode:
-        raise BuildError("linking failed:\n" + r.stderr[-3000:])
+    kw = {"creationflags": 0x08000000} if os.name == "nt" else {}
+    t1 = time.monotonic()
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, **kw)
+    while True:
+        try:
+            _, err = p.communicate(timeout=0.25)
+            break
+        except subprocess.TimeoutExpired:  # creep towards the end, never quite reaching it
+            report(share + (1 - share) * min(0.97, (time.monotonic() - t1) / link_est), "Linking")
+    if p.returncode:
+        raise BuildError("linking failed:\n" + err[-3000:])
+    timings["link"] = time.monotonic() - t1
     if cache_dir:  # drop objects this build no longer uses
         used = {os.path.basename(j[1]) for j in jobs}
         for f in os.listdir(cache_dir):
             if f.endswith(".o") and f not in used:
                 os.remove(os.path.join(cache_dir, f))
+    try:
+        json.dump(timings, open(timings_path, "w"))
+    except OSError:
+        pass
     if log:
         log(f"linked: {out_exe} ({os.path.getsize(out_exe) // (1 << 20)} MB)")
-    if progress:
-        progress(1, 1, "link")
+    report(1.0, "Linking")
     return out_exe
 
 

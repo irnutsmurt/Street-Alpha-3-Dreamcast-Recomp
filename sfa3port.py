@@ -126,7 +126,7 @@ def cmd_dev_libs(args):
         lib = os.path.join(lib_dir, "libsfa3rt.a")
         zig_build.build_runtime(lib, [os.path.join(bdir, "shaders"), os.path.join(bdir, "assets")],
                                 os.path.join(sdl_src, "include"), vk_inc, zig=zig, platform=plat,
-                                progress=lambda d, t, l: print(f"\rruntime {d}/{t}", end="", flush=True))
+                                progress=lambda d, t, l, f: print(f"\rruntime {d}/{t}", end="", flush=True))
         print(f"\n{lib}")
         print(zig_build.vulkan_stub(lib, os.path.join(lib_dir, "link"), zig=zig, platform=plat))
         res = []
