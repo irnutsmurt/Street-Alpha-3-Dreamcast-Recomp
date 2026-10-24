@@ -6,6 +6,7 @@ machine: pick the image and an install folder, Convert, Play. Nothing from the
 game is shipped with this app; it reads your disc and builds from it locally.
 The same steps as `sfa3port.py setup` (tools/pipeline.py).
 """
+import json
 import os
 import queue
 import shutil
@@ -27,6 +28,42 @@ from version import VERSION  # noqa: E402
 TITLE = "Street Fighter Alpha 3 — PC port setup"
 NEEDED_GB = 4  # unpacked image + extracted disc + build work files, at most
 UPDATE_GB = 1.5  # an update: extracted disc + generated C
+
+
+def settings_path():
+    """This app's own settings (the last disc image and install folder), per user."""
+    if os.name == "nt":
+        base = os.environ.get("APPDATA") or os.path.expanduser("~")
+        return os.path.join(base, "SFA3-Setup", "settings.json")
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
+    return os.path.join(base, "sfa3-setup", "settings.json")
+
+
+def load_settings():
+    try:
+        with open(settings_path()) as f:
+            v = json.load(f)
+        return v if isinstance(v, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_settings(**values):
+    v = load_settings()
+    v.update({k: x for k, x in values.items() if x})
+    try:
+        os.makedirs(os.path.dirname(settings_path()), exist_ok=True)
+        with open(settings_path(), "w") as f:
+            json.dump(v, f, indent=1)
+    except OSError:
+        pass  # remembering is a convenience
+
+
+def same_file(a, b):
+    try:
+        return bool(a and b) and os.path.samefile(a, b)
+    except OSError:
+        return False
 
 
 def default_install():
@@ -67,13 +104,16 @@ class App:
         form.pack(fill="x", **pad)
         form.columnconfigure(1, weight=1)
         ttk.Label(form, text="Disc image").grid(row=0, column=0, sticky="w")
-        self.image = tk.StringVar()
+        remembered = load_settings()
+        last_image = remembered.get("image", "")
+        self.image = tk.StringVar(value=last_image if os.path.isfile(last_image) else "")
         ttk.Entry(form, textvariable=self.image).grid(row=0, column=1, sticky="ew", padx=6)
         ttk.Button(form, text="Browse…", command=self.pick_image).grid(row=0, column=2)
         ttk.Label(form, text="GDI, CUE/BIN (Redump) or CHD of Street Fighter Alpha 3 (USA)", foreground="#777").grid(
             row=1, column=1, sticky="w", padx=6)
         ttk.Label(form, text="Install to").grid(row=2, column=0, sticky="w", pady=(8, 0))
-        self.install = tk.StringVar(value=(after_update or {}).get("install") or default_install())
+        self.install = tk.StringVar(value=(after_update or {}).get("install") or remembered.get("install")
+                                    or default_install())
         ttk.Entry(form, textvariable=self.install).grid(row=2, column=1, sticky="ew", padx=6, pady=(8, 0))
         ttk.Button(form, text="Browse…", command=self.pick_install).grid(row=2, column=2, pady=(8, 0))
         self.desktop = tk.BooleanVar(value=True)
@@ -111,10 +151,15 @@ class App:
         self.steam_btn.pack(side="left")
         self.root.after(100, self.poll)
         self.find_existing()
+        if not self.image.get() and self.info and os.path.isfile(self.info.get("image") or ""):
+            self.image.set(self.info["image"])  # the disc this install was made from
         self.install.trace_add("write", lambda *_: self.find_existing())
+        self.image.trace_add("write", lambda *_: self.find_existing())
         if after_update:  # this is a new version the old one just downloaded
             threading.Thread(target=lambda: self_update.remove_old(after_update.get("old")), daemon=True).start()
             if self.info and self.info.get("gdi"):
+                if not self.is_update():
+                    self.image.set("")  # an update, never a conversion from another image
                 self.root.after(500, self.start)  # bring the game up to this version straight away
         elif self_update.current_folder():
             threading.Thread(target=self.check_for_app_update, daemon=True).start()
@@ -126,11 +171,13 @@ class App:
             ("Disc images", "*.gdi *.cue *.chd *.GDI *.CUE *.CHD"), ("All files", "*")])
         if p:
             self.image.set(p)
+            save_settings(image=os.path.abspath(p))
 
     def pick_install(self):
         p = filedialog.askdirectory(title="Install the game to", initialdir=os.path.dirname(self.install.get()))
         if p:
             self.install.set(os.path.join(p, "SFA3") if os.listdir(p) and os.path.basename(p) != "SFA3" else p)
+            save_settings(install=os.path.abspath(self.install.get()))
 
     def find_existing(self):
         install = self.install.get().strip()
@@ -140,16 +187,26 @@ class App:
         self.game = exe if installed else None
         for b in (self.play_btn, self.folder_btn, self.steam_btn):
             b.config(state="normal" if installed else "disabled")
-        can_update = bool(self.info and self.info.get("gdi"))
+        can_update = self.is_update()
         self.convert_btn.config(text="Update" if can_update else "Convert")
         if not installed:
             self.status.config(text="Ready.")
         elif can_update:
             built = self.info.get("version", "?")
             self.status.config(text=f"Installed (version {built}). Update rebuilds it with version {VERSION}, "
-                                    "keeping your saves and settings. Choose a disc image only to convert from scratch.")
+                                    "keeping your saves and settings. Choose a different disc image only to convert "
+                                    "from scratch.")
         else:
-            self.status.config(text="Already installed. Choose your disc image and press Convert to rebuild it.")
+            self.status.config(text="Already installed. Press Convert to rebuild it from the chosen disc image."
+                               if self.image.get().strip() else
+                               "Already installed. Choose your disc image and press Convert to rebuild it.")
+
+    def is_update(self):
+        """An install to bring up to date: no image chosen, or the one it was made from."""
+        if not (self.info and self.info.get("gdi")):
+            return False
+        image = self.image.get().strip()
+        return not image or same_file(image, self.info.get("image"))
 
     def toggle_log(self):
         if self.log_shown.get():
@@ -168,7 +225,7 @@ class App:
 
     def start(self):
         image, install = self.image.get().strip(), self.install.get().strip()
-        update = not image and bool(self.info and self.info.get("gdi"))
+        update = self.is_update()
         if not image and not update:
             return self.fail("Choose your disc image first.")
         if image and not os.path.exists(image):
@@ -186,7 +243,8 @@ class App:
         self.convert_btn.config(state="disabled")
         self.play_btn.config(state="disabled")
         self.bar.config(value=0)
-        self.worker = threading.Thread(target=self.work, args=(image or None, install, self.desktop.get()),
+        save_settings(image=os.path.abspath(image) if image else None, install=os.path.abspath(install))
+        self.worker = threading.Thread(target=self.work, args=(None if update else image, install, self.desktop.get()),
                                        daemon=True)
         self.worker.start()
 
@@ -228,7 +286,7 @@ class App:
                     self.bar.config(value=1)
                     self.status.config(text="Done! Press Play.", foreground="#555")
                     self.info = pipeline.install_info(self.install.get().strip())
-                    self.convert_btn.config(text="Update" if self.info and self.info.get("gdi") else "Convert")
+                    self.convert_btn.config(text="Update" if self.is_update() else "Convert")
                     self.convert_btn.config(state="normal")
                     self.play_btn.config(state="normal")
                     self.folder_btn.config(state="normal")
