@@ -178,11 +178,16 @@ save), which can also be edited by hand.
 |---|---|
 | Infinite health | your health refills after every hit |
 | Infinite super | your super meter stays full (every -ism) |
-| One hit KO on CPU | any damage knocks the CPU out |
+| Half health | half a health bar for you, the CPU or both |
+| One hit KO on CPU | the CPU has 1 health point: any damage knocks it out |
 | No super for CPU | the CPU's super meter stays empty |
 | Final Bison | unlocks Final Bison: hold Start and press a button on M. Bison (Arcade, VS, Training) |
+| World Tour max EXP | your World Tour EXP at the most (9999999) |
+| World Tour X-ism / A-ism / V-ism EXP | that -ism's World Tour EXP at the most (three separate cheats) |
 
-The fight cheats work only in fights against the CPU: never in netplay, and not
+The World Tour cheats work in World Tour mode; the game raises your levels
+from the EXP after each fight and saves them with your World Tour data. The
+fight cheats work only in fights against the CPU: never in netplay, and not
 while two people are fighting (a challenger joining an Arcade fight turns them
 off for that fight). **CHEATS ON** shows above the meters while they are
 working. Final Bison stays unlocked once chosen and goes into the memory card

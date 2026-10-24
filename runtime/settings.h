@@ -20,7 +20,9 @@ typedef struct {
     int skip_intro;         /* 1 = straight from power-on to the title (the save still loads) */
     /* cheats (cheats.h): fights against the CPU only */
     int cheat_health, cheat_super, cheat_cpu_ko, cheat_cpu_super;
+    int cheat_half_health;  /* 0 off, 1 you, 2 the CPU, 3 both */
     int cheat_final_bison;  /* 1 = unlocked (kept in the game's own save too) */
+    int cheat_wt_exp, cheat_wt_x, cheat_wt_a, cheat_wt_v;  /* World Tour EXP at the most */
     char name[16];          /* netplay player name (NETWORK > NAME) */
 } Settings;
 

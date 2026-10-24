@@ -39,9 +39,14 @@ static const struct {
     K(skip_intro, "SFA3_SKIP_INTRO", 0, 1, "1 = skip the Capcom logos and the intro at power-on"),
     K(cheat_health, "SFA3_CHEAT_HEALTH", 0, 1, "cheat: 1 = your health stays full (fights against the CPU)"),
     K(cheat_super, "SFA3_CHEAT_SUPER", 0, 1, "cheat: 1 = your super meter stays full (fights against the CPU)"),
-    K(cheat_cpu_ko, "SFA3_CHEAT_CPU_KO", 0, 1, "cheat: 1 = any damage knocks the CPU out"),
+    K(cheat_cpu_ko, "SFA3_CHEAT_CPU_KO", 0, 1, "cheat: 1 = the CPU has 1 health point: any damage knocks it out"),
     K(cheat_cpu_super, "SFA3_CHEAT_CPU_SUPER", 0, 1, "cheat: 1 = the CPU's super meter stays empty"),
+    K(cheat_half_health, "SFA3_CHEAT_HALF_HEALTH", 0, 3, "cheat: half a health bar: 0 = off, 1 = you, 2 = the CPU, 3 = both"),
     K(cheat_final_bison, "SFA3_CHEAT_FINAL_BISON", 0, 1, "cheat: 1 = Final Bison unlocked (hold Start on M. Bison)"),
+    K(cheat_wt_exp, "SFA3_CHEAT_WT_EXP", 0, 1, "cheat: 1 = World Tour EXP at the most"),
+    K(cheat_wt_x, "SFA3_CHEAT_WT_X", 0, 1, "cheat: 1 = World Tour X-ism EXP at the most"),
+    K(cheat_wt_a, "SFA3_CHEAT_WT_A", 0, 1, "cheat: 1 = World Tour A-ism EXP at the most"),
+    K(cheat_wt_v, "SFA3_CHEAT_WT_V", 0, 1, "cheat: 1 = World Tour V-ism EXP at the most"),
 #undef K
 };
 #define NKEYS (sizeof s_keys / sizeof s_keys[0])
