@@ -126,8 +126,9 @@ def run(image, force=False, toolchain="auto", progress=None, log=print, paths=No
     if image is None:
         info = install_info(paths.install) if paths.install else None
         if not info or not info.get("gdi"):
-            raise SetupError("can't update: the disc image this was installed from wasn't found. "
-                             "Choose your disc image to convert again.")
+            raise SetupError("can't update: the disc image this was installed from was moved or deleted. "
+                             "Choose your disc image and press Convert (it's quick: the compiled game is "
+                             "reused). From then on the install keeps its own copy of the game's data.")
         gdi = info["gdi"]
         source_image = info.get("image")
     else:
@@ -162,6 +163,30 @@ def run(image, force=False, toolchain="auto", progress=None, log=print, paths=No
         log(f"verify: unrecognised 1ST_READ.BIN (sha1 {h}), continuing (forced)")
     else:
         raise SetupError("this disc is not the supported release (Street Fighter Alpha 3, USA, v1.001)")
+
+    # the install keeps its own compact copy of the disc (what the game reads while
+    # playing): the image it was made from can then be moved or deleted
+    if paths.install:
+        compact = os.path.join(paths.image_work, "compact")
+        if os.path.normcase(os.path.abspath(os.path.dirname(gdi))) != os.path.normcase(os.path.abspath(compact)):
+            step("verify", 0, "Copying the game's data into the install")
+            tmp = compact + ".new"
+            shutil.rmtree(tmp, ignore_errors=True)
+            try:
+                gdi_extract.write_compact(gdi_extract.parse_gdi(gdi), tmp,
+                                          progress=lambda d, t: step("verify", d / max(t, 1),
+                                                                     "Copying the game's data into the install"))
+            except (OSError, ValueError, IndexError) as e:
+                shutil.rmtree(tmp, ignore_errors=True)
+                raise SetupError(f"could not copy the game's data into the install ({e})")
+            shutil.rmtree(compact, ignore_errors=True)
+            os.replace(tmp, compact)
+            gdi = os.path.join(compact, "disc.gdi")
+            log(f"disc: copied into the install ({gdi})")
+        for name in os.listdir(paths.image_work) if os.path.isdir(paths.image_work) else []:  # an unpacked CHD, a CUE's GDI: no longer needed
+            if name != "compact":
+                p = os.path.join(paths.image_work, name)
+                shutil.rmtree(p) if os.path.isdir(p) else os.remove(p)
 
     # 4. recompile
     step("recomp")
