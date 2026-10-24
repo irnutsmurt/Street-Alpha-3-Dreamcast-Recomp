@@ -234,9 +234,29 @@ static void control_file(PadState *st) {
 }
 
 
+/* The mouse cursor: hidden over the game, shown while the mouse moves, hidden
+ * again after 2 seconds without movement. */
+static void cursor_autohide(const SDL_Event *e) {
+    static uint64_t s_moved;
+    static int s_shown = -1;
+    uint64_t now = SDL_GetTicks();
+    if (e && (e->type == SDL_EVENT_MOUSE_MOTION || e->type == SDL_EVENT_MOUSE_BUTTON_DOWN)) {
+        s_moved = now;
+        if (s_shown != 1) {
+            SDL_ShowCursor();
+            s_shown = 1;
+        }
+    } else if (!e && s_shown != 0 && now - s_moved > 2000) {
+        SDL_HideCursor();
+        s_shown = 0;
+    }
+}
+
 void input_update(void) {
     SDL_Event e;
+    cursor_autohide(NULL);
     while (SDL_PollEvent(&e)) {
+        cursor_autohide(&e);
         if (e.type == SDL_EVENT_QUIT) g_quit_requested = 1;
         if (controls_capturing()) {  /* CONTROLS page: the next key or button is the new binding */
             int took = 0;

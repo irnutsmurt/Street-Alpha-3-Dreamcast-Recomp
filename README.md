@@ -234,4 +234,6 @@ Third-party components keep their own licences:
 Steam library artwork is not part of this repository or the downloads: **Add
 to Steam** fetches it from SteamGridDB on the player's machine. Banner by
 Alfonso72394 ([#164774](https://www.steamgriddb.com/grid/164774)), cover by
-brendanrfoley ([#297136](https://www.steamgriddb.com/grid/297136)).
+brendanrfoley ([#297136](https://www.steamgriddb.com/grid/297136)), game page
+hero by Shahars71 ([#7916](https://www.steamgriddb.com/hero/7916)) and logo by
+wulfbraker ([#61805](https://www.steamgriddb.com/logo/61805)).

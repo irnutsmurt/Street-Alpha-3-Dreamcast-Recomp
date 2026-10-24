@@ -163,6 +163,11 @@ STEAM_ART = {
                "Alfonso72394, SteamGridDB #164774"),
     "cover": ("p", "https://cdn2.steamgriddb.com/grid/85feac317c419e5b015d1209f8882102.png",
               "brendanrfoley, SteamGridDB #297136"),
+    # the game page: the hero across its top, with the logo over the hero's empty left side
+    "hero": ("_hero", "https://cdn2.steamgriddb.com/hero/e0854e3c03ec877be65d351b90680d46.png",
+             "Shahars71, SteamGridDB #7916"),
+    "logo": ("_logo", "https://cdn2.steamgriddb.com/logo/d3e48f4fee814605e4ed18cc8a66e01a.png",
+             "wulfbraker, SteamGridDB #61805"),
 }
 
 
