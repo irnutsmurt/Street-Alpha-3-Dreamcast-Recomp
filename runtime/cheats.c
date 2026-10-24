@@ -3,8 +3,10 @@
  * The fighters are the 4 structures at 0x8C17FD38 (lobby.c): +0 1 = in play,
  * +0x60 health (16 bits, signed; below 0 is a knockout), +0x62 the round's
  * full health (144), +0x14E super meter (144 = full in every -ism), +0x155
- * 1 = played by the CPU, +0x140 World Tour EXP (a copy of the entry's, shown
- * over the health bar). A round is being fought while the game state
+ * 1 = played by the CPU, +0x20C the guard meter's size (60, smaller after
+ * each guard crush), +0x20D the guard damage taken (a crush when it reaches
+ * the size; it wears off between blocks), +0x140 World Tour EXP (a copy of
+ * the entry's, shown over the health bar). A round is being fought while the game state
  * (0x8C17FBC0) reads 2 at +2 (a fight) and 3 at +6 (4 = round over, 2 = the
  * round's intro); +0x72 is the game mode (3 = World Tour). Health and meters
  * are rewritten once a frame, after the game's own logic: full health refills
@@ -37,6 +39,8 @@
 #define F_WT_EXP 0x140u
 #define F_SUPER 0x14Eu
 #define F_CPU 0x155u
+#define F_GUARD_SIZE 0x20Cu
+#define F_GUARD_DAMAGE 0x20Du
 #define SUPER_FULL 0x90u
 #define WT_ENTRIES 0x8C188D48u
 #define WT_ENTRY_STRIDE 0x354u
@@ -49,7 +53,8 @@
 enum { HALF_YOU = 1, HALF_CPU = 2 };  /* cheat_half_health bits */
 
 static const char *const s_labels[CHEAT_COUNT] = {
-    "INFINITE HEALTH", "INFINITE SUPER", "HALF HEALTH", "ONE HIT KO ON CPU", "NO SUPER FOR CPU", "FINAL BISON",
+    "INFINITE HEALTH", "INFINITE SUPER", "INFINITE GUARD", "HALF HEALTH", "ONE HIT KO ON CPU", "GUARD CRUSH ON CPU",
+    "NO SUPER FOR CPU", "FINAL BISON",
     "WORLD TOUR MAX EXP", "WORLD TOUR X-ISM EXP", "WORLD TOUR A-ISM EXP", "WORLD TOUR V-ISM EXP",
 };
 
@@ -59,6 +64,8 @@ static int *setting(int i) {
     switch (i) {
     case CHEAT_HEALTH: return &g_settings.cheat_health;
     case CHEAT_SUPER: return &g_settings.cheat_super;
+    case CHEAT_GUARD: return &g_settings.cheat_guard;
+    case CHEAT_CPU_GUARD_CRUSH: return &g_settings.cheat_cpu_guard_crush;
     case CHEAT_HALF_HEALTH: return &g_settings.cheat_half_health;
     case CHEAT_CPU_KO: return &g_settings.cheat_cpu_ko;
     case CHEAT_CPU_SUPER: return &g_settings.cheat_cpu_super;
@@ -98,6 +105,7 @@ void cheat_change(int i, int dir) {
 void cheats_reset(void) {
     g_settings.cheat_health = g_settings.cheat_super = g_settings.cheat_half_health = 0;
     g_settings.cheat_cpu_ko = g_settings.cheat_cpu_super = 0;
+    g_settings.cheat_guard = g_settings.cheat_cpu_guard_crush = 0;
     g_settings.cheat_wt_exp = g_settings.cheat_wt_x = g_settings.cheat_wt_a = g_settings.cheat_wt_v = 0;
     settings_save();
 }
@@ -108,7 +116,7 @@ static uint32_t fighter(int i) { return FIGHTERS + (uint32_t)i * FIGHTER_STRIDE;
 
 static int fight_cheats_on(void) {
     return g_settings.cheat_health || g_settings.cheat_super || g_settings.cheat_half_health || g_settings.cheat_cpu_ko ||
-           g_settings.cheat_cpu_super;
+           g_settings.cheat_cpu_super || g_settings.cheat_guard || g_settings.cheat_cpu_guard_crush;
 }
 
 static int wt_cheats_on(void) {
@@ -167,9 +175,13 @@ void cheats_frame(void) {
         if (!cpu) {
             if (g_settings.cheat_health && health < full) health = full;
             if (g_settings.cheat_super) W16(f + F_SUPER, SUPER_FULL);
+            if (g_settings.cheat_guard) W8(f + F_GUARD_DAMAGE, 0);
         } else {
             if (g_settings.cheat_cpu_ko && health > 1) health = 1;
             if (g_settings.cheat_cpu_super) W16(f + F_SUPER, 0);
+            uint32_t size = R8(f + F_GUARD_SIZE);
+            if (g_settings.cheat_cpu_guard_crush && size > 1 && R8(f + F_GUARD_DAMAGE) < size - 1)
+                W8(f + F_GUARD_DAMAGE, size - 1);
         }
         if (health > full) health = full;  /* half health */
         if (health != (int16_t)R16(f + F_HEALTH) && R16(f + F_HEALTH) < 0x8000u) W16(f + F_HEALTH, (uint16_t)health);

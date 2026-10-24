@@ -127,6 +127,7 @@ static char s_ctl_queue[64][256];
 static int s_ctl_head, s_ctl_tail, s_ctl_timer;
 static uint16_t s_ctl_hold;
 static int s_ctl_port;  /* 0 = player 1 ("press"), 1 = player 2 ("press2") */
+static uint16_t s_ctl_held[2];  /* "hold <1|2> <buttons|none>": held until changed */
 
 static uint16_t button_bit(const char *name) {
     static const struct { const char *name; uint16_t bit; } names[] = {
@@ -161,6 +162,7 @@ static void control_file(PadState *st) {
         fclose(f);
         remove(path);
     }
+    for (int p = 0; p < 2; p++) st[p].buttons |= s_ctl_held[p];
     if (s_ctl_timer > 0) {
         s_ctl_timer--;
         if (s_ctl_timer > 10) st[s_ctl_port].buttons |= s_ctl_hold;
@@ -177,6 +179,10 @@ static void control_file(PadState *st) {
         s_ctl_hold = button_bit(arg);
         s_ctl_port = cmd[5] ? cmd[5] - '1' : 0;
         s_ctl_timer = (n > 0 ? n : 6) + 10;
+    } else if (!strcmp(cmd, "hold")) {  /* hold <1|2> <buttons|none>: keep buttons held (debug) */
+        char what[64] = "";
+        sscanf(line, "%*s %*s %63s", what);
+        s_ctl_held[atoi(arg) == 2] = button_bit(what);
     } else if (!strcmp(cmd, "wait")) {
         s_ctl_timer = atoi(arg);
     } else if (!strcmp(cmd, "shot")) {

@@ -182,8 +182,10 @@ save), which can also be edited by hand.
 |---|---|
 | Infinite health | your health refills after every hit |
 | Infinite super | your super meter stays full (every -ism) |
+| Infinite guard | your guard meter never wears down: no guard crush |
 | Half health | half a health bar for you, the CPU or both |
 | One hit KO on CPU | the CPU has 1 health point: any damage knocks it out |
+| Guard crush on CPU | the CPU's guard meter stays on its last point: its next blocked hit crushes it |
 | No super for CPU | the CPU's super meter stays empty |
 | Final Bison | unlocks Final Bison: hold Start and press a button on M. Bison (Arcade, VS, Training) |
 | World Tour max EXP | your World Tour EXP at the most (9999999) |
