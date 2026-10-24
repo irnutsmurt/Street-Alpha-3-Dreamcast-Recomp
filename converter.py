@@ -240,11 +240,13 @@ class App:
                 elif ev[0] == "app-progress":
                     self.update_label.config(text=ev[1])
                 elif ev[0] == "app-ready":
+                    self.update_label.config(text="Installing the new version… the app restarts by itself.")
+                    self.root.update_idletasks()
                     try:
-                        subprocess.Popen([ev[1], "--after-update", self_update.current_folder(),
-                                          self.install.get().strip()], cwd=os.path.dirname(ev[1]))
+                        self_update.apply_and_restart(ev[1], self_update.current_folder(), self.install.get().strip())
                     except OSError as e:
-                        self.fail(f"Couldn't start the new version ({e.strerror}).")
+                        self.update_btn.config(state="normal")
+                        self.update_label.config(text=f"Couldn't install the new version ({e}).")
                         continue
                     self.root.destroy()
                     return
@@ -289,14 +291,15 @@ class App:
             return
         self.update_btn.config(state="disabled")
         version, url = self.new_app
+        app_dir = self_update.current_folder()
 
         def work():
             try:
-                exe = self_update.download_and_unpack(
-                    url, version, os.path.dirname(self_update.current_folder()),
+                staged = self_update.stage(
+                    url, version, app_dir,
                     progress=lambda d, t: self.events.put(("app-progress", f"Downloading version {version}… "
                                                            f"{d * 100 // t if t else d >> 20}{'%' if t else ' MB'}")))
-                self.events.put(("app-ready", exe))
+                self.events.put(("app-ready", staged))
             except Exception as e:
                 self.events.put(("app-failed", f"The download failed ({e}). Try again later."))
         threading.Thread(target=work, daemon=True).start()
