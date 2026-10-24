@@ -116,7 +116,7 @@ static void scripted_input(PadState *st) {
 
 /* SFA3_CONTROL=<file>: a testing aid. The file is polled every frame; when it
  * appears its lines are queued and it is deleted. Commands:
- *   press <button> [frames]   hold a port-A button (default 6 frames, then 10 released)
+ *   press <button> [frames]   hold a port-A button (default 6 frames, then 10 released); "start+a": both
  *   press2 <button> [frames]  the same on port B (player 2)
  *   wait <frames>
  *   shot                      write a screenshot (build/shot_<frame>.png)
@@ -133,9 +133,15 @@ static uint16_t button_bit(const char *name) {
         {"start", BTN_START}, {"a", BTN_A}, {"b", BTN_B}, {"x", BTN_X}, {"y", BTN_Y},
         {"up", BTN_UP}, {"down", BTN_DOWN}, {"left", BTN_LEFT}, {"right", BTN_RIGHT},
     };
-    for (size_t i = 0; i < sizeof names / sizeof names[0]; i++)
-        if (!strcmp(name, names[i].name)) return names[i].bit;
-    return 0;
+    uint16_t bits = 0;  /* "start+a": both */
+    for (const char *p = name; *p;) {
+        size_t len = strcspn(p, "+");
+        for (size_t i = 0; i < sizeof names / sizeof names[0]; i++)
+            if (strlen(names[i].name) == len && !strncmp(p, names[i].name, len)) bits |= names[i].bit;
+        p += len;
+        if (*p == '+') p++;
+    }
+    return bits;
 }
 
 static void control_file(PadState *st) {
@@ -181,19 +187,19 @@ static void control_file(PadState *st) {
         uint32_t a = (uint32_t)strtoul(arg, NULL, 16);
         extern uint64_t g_vblank_count;
         logf_("peek %08X = %u (vbl %llu)", a, R8(a), (unsigned long long)g_vblank_count);
+    } else if (!strcmp(cmd, "dump")) {  /* dump <hex address> <bytes>: log guest memory (debug) */
+        uint32_t a = (uint32_t)strtoul(arg, NULL, 16);
+        for (int off = 0; off < (n > 0 ? n : 16); off += 16) {
+            char b[64];
+            for (int k = 0; k < 16; k++) snprintf(b + 3 * k, 4, " %02X", R8(a + (uint32_t)(off + k)));
+            logf_("dump %08X:%s", a + (uint32_t)off, b);
+        }
     } else if (!strcmp(cmd, "banner")) {  /* banner [text]: the netplay notice (testing its look) */
         const char *t = strchr(line, ' ');
         menu_banner(t ? t + 1 : "");
     } else if (!strcmp(cmd, "mode")) {  /* mode <id>: the Mode Menu starts this game mode next time it runs */
         void lobby_queue_mode(int mode);
         lobby_queue_mode(atoi(arg));
-    } else if (!strcmp(cmd, "key")) {  /* key <SDL key name>: a key press event (testing CONTROLS) */
-        const char *t = strchr(line, ' ');
-        SDL_Event ev = {0};
-        ev.type = SDL_EVENT_KEY_DOWN;
-        ev.key.scancode = SDL_GetScancodeFromName(t ? t + 1 : "");
-        ev.key.down = true;
-        SDL_PushEvent(&ev);
     } else if (!strcmp(cmd, "key")) {  /* key <SDL key name>: a key press event (testing CONTROLS) */
         const char *t = strchr(line, ' ');
         SDL_Event ev = {0};

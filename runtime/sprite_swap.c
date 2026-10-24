@@ -15,6 +15,7 @@
 #include "sprite_swap.h"
 
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "pvr_tex.h"
@@ -51,7 +52,15 @@ static const struct { const uint32_t *px; uint32_t w, h; } s_images[IMG_COUNT] =
 #define IMG_CARD IMG_VMU_CARD
 #define IMG_EMPTY IMG_VMU_EMPTY
 
+static uint32_t s_cheats_label[192 * 32];
+static int s_cheats_ready;
+
 const uint32_t *sprite_swap_image(uint32_t id, uint32_t *w, uint32_t *h) {
+    if (id == IMG_CHEATS) {
+        *w = 192;
+        *h = 32;
+        return s_cheats_ready ? s_cheats_label : NULL;
+    }
     if (id >= IMG_COUNT) return NULL;
     *w = s_images[id].w;
     *h = s_images[id].h;
@@ -328,7 +337,122 @@ static void images(PvrFrame *pf) {
         pf->npolys++;
     }
 }
+/* ---------------- Option Mode > CHEATS: the fifth button's label ----------------
+ * Option Mode's buttons show 192x32 labels from one texture, GAME OPTION,
+ * BUTTON CONFIG, DISPLAY and EXIT in rows 0-3, each on a diagonal teal-blue
+ * gradient. The CHEATS button (option_menu.c) is a DISPLAY button whose
+ * picture ends one texel short (v 0x40-0x5F); it is drawn with a CHEATS label
+ * made here from that texture: the background of GAME OPTION with its
+ * letters taken out (EXIT's row is the same gradient turned around, and fills
+ * most of the gaps), and the letters C E A T S copied from the other labels.
+ * There is no H, so it is drawn in the same style: 3-texel stems and bar in
+ * the letters' yellow with a 1-texel purple outline. */
+#define LBL_W 192
+#define LBL_H 32
+
+static int lbl_letter(uint32_t c) { return (c & 0xFF) >= 40 && c != 0xFFFFFFFFu; }        /* yellow, outline, edge */
+static int lbl_plain(uint32_t c) { return (c & 0xFF) <= 8 && ((c >> 16) & 0xFF) >= 140; }  /* the gradient */
+
+static int build_cheats_label(const uint32_t *tex, uint32_t tw) {
+#define SRC(row, x, y) tex[((row) * LBL_H + (y)) * tw + (x)]
+    static const char *const glyph_h[] = {
+        "ppppp.....ppppp", "pYYYp.....pYYYp", "pYYYp.....pYYYp", "pYYYp.....pYYYp", "pYYYp.....pYYYp",
+        "pYYYp.....pYYYp", "pYYYpppppppYYYp", "pYYYYYYYYYYYYYp", "pYYYYYYYYYYYYYp", "pYYYpppppppYYYp",
+        "pYYYp.....pYYYp", "pYYYp.....pYYYp", "pYYYp.....pYYYp", "pYYYp.....pYYYp", "ppppp.....ppppp",
+    };
+    /* letters: label row, first and last+1 column of the letter's yellow, rows down to line up */
+    static const struct { int row, x0, x1, dy; } letters[] = {
+        {1, 106, 118, 0}, {-1, 0, 13, 0}, {0, 66, 80, 0}, {0, 32, 47, 0}, {0, 123, 138, 0}, {2, 69, 83, 1},
+    };
+    uint32_t *out = s_cheats_label;
+    uint32_t yellow = SRC(1, 136, 14), purple = SRC(1, 133, 14);  /* N of CONFIG: a stem and its outline */
+    if (!lbl_letter(yellow) || !lbl_letter(purple) || yellow == purple) return 0;
+    static uint8_t hole[LBL_W * LBL_H];
+    for (int y = 0; y < LBL_H; y++)
+        for (int x = 0; x < LBL_W; x++) {
+            uint32_t a = SRC(0, x, y), b = SRC(3, LBL_W - 1 - x, LBL_H - 1 - y);
+            hole[y * LBL_W + x] = lbl_letter(a) && lbl_letter(b);
+            out[y * LBL_W + x] = !lbl_letter(a) ? a : b;
+        }
+    for (int y = 0; y < LBL_H; y++)
+        for (int x = 0; x < LBL_W; x++) {
+            if (!hole[y * LBL_W + x]) continue;
+            /* along the gradient's stripes (down-left to up-right), then sideways */
+            static const int dirs[4][2] = {{1, -1}, {-1, 1}, {1, 0}, {-1, 0}};
+            for (int d = 1, found = 0; d < 60 && !found; d++)
+                for (int k = 0; k < 4 && !found; k++) {
+                    int xx = x + d * dirs[k][0], yy = y + d * dirs[k][1];
+                    if (xx < 0 || yy < 0 || xx >= LBL_W || yy >= LBL_H || hole[yy * LBL_W + xx]) continue;
+                    uint32_t c = out[yy * LBL_W + xx];
+                    if (lbl_plain(c)) out[y * LBL_W + x] = c, found = 1;
+                }
+        }
+    int total = 0;
+    for (size_t i = 0; i < sizeof letters / sizeof letters[0]; i++) total += letters[i].x1 - letters[i].x0 + 2;
+    int pos = (LBL_W - (total - 2)) / 2;
+    for (size_t i = 0; i < sizeof letters / sizeof letters[0]; i++) {
+        int r = letters[i].row, x0 = letters[i].x0, x1 = letters[i].x1, dy = letters[i].dy, n = 0;
+        if (r < 0) {
+            for (int y = 0; y < 15; y++)
+                for (int x = 0; x < 15; x++)
+                    if (glyph_h[y][x] != '.') out[(9 + y) * LBL_W + pos - 1 + x] = glyph_h[y][x] == 'Y' ? yellow : purple;
+        } else {
+            for (int y = 8; y < 26; y++)
+                for (int x = x0 - 1; x <= x1; x++) {
+                    uint32_t c = SRC(r, x, y);
+                    if (lbl_letter(c)) out[(y + dy) * LBL_W + x - x0 + pos] = c, n++;
+                }
+            if (n < 40) return 0;  /* not the labels expected */
+        }
+        pos += x1 - x0 + 2;
+    }
+    return 1;
+#undef SRC
+}
+
+static uint64_t s_cheats_frame;
+void sprite_swap_cheats_button(void) { s_cheats_frame = g_vblank_count; }
+
+static void cheats_button(PvrFrame *pf) {
+    static uint32_t built_tcw;
+    static int failed;
+    for (uint32_t i = 0; i < pf->npolys; i++) {
+        PvrPoly *p = &pf->polys[i];
+        if (!(p->isp & (1u << 25)) || p->vertex_count != 4 || SPRITE_SWAP_IS_TCW(p->tcw)) continue;
+        float u0 = 1e9f, v0 = 1e9f, u1 = -1e9f, v1 = -1e9f;
+        for (uint32_t k = 0; k < 4; k++) {
+            const PvrVertex *v = &pf->verts[p->first_vertex + k];
+            u0 = fminf(u0, v->u); u1 = fmaxf(u1, v->u);
+            v0 = fminf(v0, v->v); v1 = fmaxf(v1, v->v);
+        }
+        TexKey key;
+        pvr_tex_info(p->tcw, p->tsp, &key);
+        if (key.w != 256 || key.h != 256 || fabsf(u0) > 0.01f || fabsf(u1 * 256 - 192) > 0.05f ||
+            fabsf(v0 * 256 - 64) > 0.05f || fabsf(v1 * 256 - 95) > 0.05f)
+            continue;
+        if (!s_cheats_ready || built_tcw != p->tcw) {
+            if (failed && built_tcw == p->tcw) continue;
+            uint32_t *tex = malloc(256 * 256 * 4);
+            if (!tex) continue;
+            pvr_tex_decode(&key, tex);
+            int ok = build_cheats_label(tex, 256);
+            free(tex);
+            built_tcw = p->tcw;
+            failed = !ok;
+            if (!ok) continue;
+            s_cheats_ready = 1;
+        }
+        p->tcw = SPRITE_SWAP_TCW(IMG_CHEATS);
+        for (uint32_t k = 0; k < 4; k++) {
+            PvrVertex *v = &pf->verts[p->first_vertex + k];
+            v->u = (v->u - u0) / (u1 - u0);
+            v->v = (v->v - v0) / (v1 - v0);
+        }
+    }
+}
+
 void sprite_swap_frame(PvrFrame *pf) {
+    if (recent(s_cheats_frame)) cheats_button(pf);
     if (s_nreq && recent(s_req_frame)) images(pf);
     s_nreq = 0;  /* requests are per frame */
     if (recent(s_icons_frame) || recent(s_bar[0].frame) || recent(s_bar[1].frame)) button_config(pf);

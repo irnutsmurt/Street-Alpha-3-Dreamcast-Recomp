@@ -20,7 +20,10 @@ void sprite_swap_attack_icons(int on);
 /* the port's images, by id */
 enum { IMG_VMU_CARD, IMG_VMU_EMPTY, IMG_PS_CROSS, IMG_PS_CIRCLE, IMG_PS_SQUARE, IMG_PS_TRIANGLE, IMG_PS_L1,
        IMG_PS_R1, IMG_PS_L2, IMG_PS_R2, IMG_XB_A, IMG_XB_B, IMG_XB_X, IMG_XB_Y, IMG_XB_LB, IMG_XB_RB, IMG_XB_LT,
-       IMG_XB_RT, IMG_PANEL, IMG_BAR, IMG_COUNT };  /* PANEL / BAR: the pause menu's colours */
+       IMG_XB_RT, IMG_PANEL, IMG_BAR, IMG_COUNT,  /* PANEL / BAR: the pause menu's colours */
+       IMG_CHEATS = IMG_COUNT };                  /* made at run time: Option Mode's CHEATS label */
+/* Option Mode's CHEATS button is on screen this frame (option_menu.c) */
+void sprite_swap_cheats_button(void);
 /* an image over the game's picture for the frame being built (screen
  * pixels of the 640x480 picture); sprite_swap_images_begin() clears them */
 void sprite_swap_images_begin(void);

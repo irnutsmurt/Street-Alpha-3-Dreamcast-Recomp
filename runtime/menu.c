@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "cheats.h"
 #include "controls.h"
 #include "menu.h"
 #include "netplay.h"
@@ -97,12 +98,13 @@ static void text(int x, int y, const char *s, uint32_t c) {
 
 /* ---------------- items ---------------- */
 
-/* the display options, then CONTROLS, DEFAULT, (in a session) BACK TO
- * LOBBY and LEAVE SESSION, RESUME, QUIT */
-enum { ITEM_CONTROLS = OPT_COUNT, ITEM_DEFAULT, ITEM_LOBBY, ITEM_LEAVE, ITEM_RESUME, ITEM_QUIT, ITEM_COUNT };
+/* the display options, then CONTROLS, CHEATS (not in a session), DEFAULT,
+ * (in a session) BACK TO LOBBY and LEAVE SESSION, RESUME, QUIT */
+enum { ITEM_CONTROLS = OPT_COUNT, ITEM_CHEATS, ITEM_DEFAULT, ITEM_LOBBY, ITEM_LEAVE, ITEM_RESUME, ITEM_QUIT, ITEM_COUNT };
 
 static const char *item_label(int i) {
-    static const char *const names[] = {"CONTROLS", "DEFAULT", "BACK TO LOBBY", "LEAVE SESSION", "RESUME GAME", "QUIT GAME"};
+    static const char *const names[] = {"CONTROLS", "CHEATS", "DEFAULT", "BACK TO LOBBY", "LEAVE SESSION", "RESUME GAME",
+                                        "QUIT GAME"};
     return i < OPT_COUNT ? option_label(i) : names[i - OPT_COUNT];
 }
 
@@ -112,7 +114,8 @@ static int s_items[ITEM_COUNT], s_nitems;
 static void list_items(void) {
     s_nitems = 0;
     for (int i = 0; i < ITEM_COUNT; i++)
-        if ((i != ITEM_LOBBY && i != ITEM_LEAVE) || netplay_active()) s_items[s_nitems++] = i;
+        if (i == ITEM_LOBBY || i == ITEM_LEAVE ? netplay_active() : i != ITEM_CHEATS || cheats_available())
+            s_items[s_nitems++] = i;
     if (s_sel >= s_nitems) s_sel = s_nitems - 1;
 }
 
@@ -192,6 +195,51 @@ static void redraw_controls(void) {
     s_dirty = 1;
 }
 
+/* ---------------- CHEATS page ----------------
+ * The cheats (the same as Option Mode > CHEATS), DEFAULT and BACK. */
+static int s_hsel;
+enum { HROW_DEFAULT = CHEAT_COUNT, HROW_BACK, HROW_COUNT };
+
+static void redraw_cheats(void) {
+    memset(s_canvas, 0, sizeof s_canvas);
+    int px, py, pw, ph;
+    panel("CHEATS", &px, &py, &pw, &ph);
+    for (int r = 0; r < HROW_COUNT; r++) {
+        int sel = r == s_hsel, y = py + 26 + r * 13 + (r >= HROW_DEFAULT ? 4 : 0);
+        if (sel) fill(px + 4, y - 3, pw - 8, 13, RGBA(200, 60, 40, 255));
+        uint32_t c = sel ? RGBA(255, 255, 255, 255) : RGBA(180, 190, 230, 255);
+        if (sel) text(px + 8, y, ">", c);
+        text(px + 18, y, r == HROW_DEFAULT ? "DEFAULT" : r == HROW_BACK ? "BACK" : cheat_label(r), c);
+        if (r < CHEAT_COUNT) {
+            char v[32], b[40];
+            cheat_value(r, v, sizeof v);
+            if (sel) snprintf(b, sizeof b, "< %s >", v); else snprintf(b, sizeof b, "%s", v);
+            text(px + pw - 10 - text_width(b), y, b, RGBA(255, 230, 90, 255));
+        }
+    }
+    static const char *const notes[] = {"AGAINST THE CPU ONLY", "FINAL BISON: HOLD START ON M.BISON"};
+    for (int k = 0; k < 2; k++)
+        text(MENU_W / 2 - text_width(notes[k]) / 2, py + 26 + HROW_COUNT * 13 + 14 + k * 11, notes[k],
+             RGBA(150, 160, 200, 255));
+    const char *help = "ENTER: CHANGE   ESC: BACK";
+    text(MENU_W / 2 - text_width(help) / 2, py + ph - 11, help, RGBA(150, 160, 200, 255));
+    s_dirty = 1;
+}
+
+static void cheats_action(MenuAction a) {
+    switch (a) {
+    case MENU_UP: s_hsel = (s_hsel + HROW_COUNT - 1) % HROW_COUNT; break;
+    case MENU_DOWN: s_hsel = (s_hsel + 1) % HROW_COUNT; break;
+    case MENU_BACK: s_page = 0; break;
+    case MENU_LEFT: case MENU_RIGHT: case MENU_ACCEPT:
+        if (s_hsel < CHEAT_COUNT) cheat_change(s_hsel, a == MENU_LEFT ? -1 : +1);
+        else if (a != MENU_ACCEPT) break;
+        else if (s_hsel == HROW_DEFAULT) cheats_reset();
+        else s_page = 0;
+        break;
+    }
+}
+
 static void controls_action(MenuAction a) {
     int rows[32], n = control_rows(rows), r = rows[s_csel < n ? s_csel : n - 1];
     int dir = a == MENU_LEFT ? -1 : +1;
@@ -212,14 +260,15 @@ static void controls_action(MenuAction a) {
 }
 
 void menu_refresh(void) {
-    if (s_open) { if (s_page) redraw_controls(); else redraw(); }
+    if (s_open) redraw();
 }
 
 static void redraw(void) {
-    if (s_page) { redraw_controls(); return; }
+    if (s_page == 1) { redraw_controls(); return; }
+    if (s_page == 2) { redraw_cheats(); return; }
     memset(s_canvas, 0, sizeof s_canvas);
     list_items();
-    const int px = 22, py = 6, pw = MENU_W - 44, ph = 228, row = s_nitems > 13 ? 12 : 13;
+    const int px = 22, py = 6, pw = MENU_W - 44, ph = 228, row = s_nitems > 15 ? 11 : s_nitems > 13 ? 12 : 13;
     fill(px - 2, py - 2, pw + 4, ph + 4, RGBA(240, 200, 40, 255));   /* border */
     fill(px, py, pw, ph, RGBA(16, 20, 48, 235));                     /* panel */
     fill(px, py, pw, 18, RGBA(40, 52, 120, 255));                     /* title bar */
@@ -248,6 +297,7 @@ static void activate(int dir) {
     int i = s_items[s_sel];
     if (i < OPT_COUNT) option_change(i, dir);
     else if (i == ITEM_CONTROLS) { s_page = 1; s_csel = 0; }
+    else if (i == ITEM_CHEATS) { s_page = 2; s_hsel = 0; }
     else if (i == ITEM_DEFAULT) options_reset();
     else if (i == ITEM_LOBBY) { netplay_request_lobby(); s_open = 0; }
     else if (i == ITEM_LEAVE) { netplay_leave(); s_open = 0; }
@@ -258,10 +308,15 @@ static void activate(int dir) {
 /* ---------------- banner ----------------
  * A one-line notice over the game (netplay: joining, waiting for the other
  * player), drawn on the same canvas when the menu is closed. */
-static char s_banner[48];
+static char s_banner[48], s_tag[16];
 
 static void redraw_banner(void) {
     memset(s_canvas, 0, sizeof s_canvas);
+    if (s_tag[0]) {  /* a small tag above the bottom of the picture */
+        int w = text_width(s_tag) + 6, x = MENU_W / 2 - w / 2, y = MENU_H - 44;
+        fill(x, y, w, 11, RGBA(16, 20, 48, 160));
+        text(x + 3, y + 2, s_tag, RGBA(255, 230, 90, 255));
+    }
     if (s_banner[0]) {
         int w = text_width(s_banner) + 24, x = MENU_W / 2 - w / 2, y = MENU_H / 2 - 12;
         fill(x - 2, y - 2, w + 4, 24 + 4, RGBA(240, 200, 40, 255));
@@ -277,7 +332,13 @@ void menu_banner(const char *t) {
     if (!s_open) redraw_banner();
 }
 
-int menu_overlay_visible(void) { return s_open || s_banner[0]; }
+void menu_tag(const char *t) {
+    if (!strcmp(t, s_tag)) return;
+    snprintf(s_tag, sizeof s_tag, "%s", t);
+    if (!s_open) redraw_banner();
+}
+
+int menu_overlay_visible(void) { return s_open || s_banner[0] || s_tag[0]; }
 
 /* ---------------- public ---------------- */
 
@@ -293,7 +354,8 @@ void menu_toggle(void) {
 void menu_action(MenuAction a) {
     if (!s_open || controls_capturing()) return;
     if (s_page) {
-        controls_action(a);
+        if (s_page == 1) controls_action(a);
+        else cheats_action(a);
         redraw();
         return;
     }

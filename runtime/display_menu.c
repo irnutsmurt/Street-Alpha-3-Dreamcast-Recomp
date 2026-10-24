@@ -1,4 +1,5 @@
-/* Option Mode > DISPLAY, rebuilt as the PC display settings screen.
+/* Option Mode > DISPLAY, rebuilt as the PC display settings screen, and
+ * Option Mode > CHEATS (option_menu.c), the same screen listing the cheats.
  *
  * On the Dreamcast this screen ("DISPLAY ADJUST") moved and shrank the picture
  * for CRT televisions. Its per-frame logic (0x8C07BC42) and draw (0x8C07C6B0)
@@ -9,6 +10,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "cheats.h"
 #include "cpu.h"
 #include "runtime.h"
 #include "gameui.h"
@@ -24,8 +26,26 @@
 #define TEXT_ARENA 0x8C07BE40u
 #define TEXT_ARENA_END 0x8C07C1D0u
 
-/* rows: the display options, then DEFAULT and EXIT */
-enum { ROW_DEFAULT = OPT_COUNT, ROW_EXIT, ROW_COUNT };
+/* rows: the display options (or the cheats), then DEFAULT and EXIT */
+#define ROW_MAX ((OPT_COUNT > CHEAT_COUNT ? OPT_COUNT : CHEAT_COUNT) + 2)
+
+/* which list the screen shows: set by Option Mode as it opens the screen */
+static int s_cheats;
+void display_menu_show_cheats(int on) { s_cheats = on; }
+
+static int items(void) { return s_cheats ? CHEAT_COUNT : OPT_COUNT; }
+static int row_default(void) { return items(); }
+static int row_exit(void) { return items() + 1; }
+static const char *item_label(int i) { return s_cheats ? cheat_label(i) : option_label(i); }
+static void item_value(int i, char *out, size_t n) {
+    if (s_cheats) cheat_value(i, out, n);
+    else option_value(i, out, n);
+}
+static int item_enabled(int i) { return s_cheats || option_enabled(i); }
+static void item_change(int i, int dir) {
+    if (s_cheats) cheat_change(i, dir);
+    else option_change(i, dir);
+}
 
 /* Layout in the print routine's coordinates: a 384x240 grid, 12 units per
  * character (gameui.h). The scrolling banner covers everything below y = 165. */
@@ -48,8 +68,8 @@ static uint64_t s_last_frame;
  * size only for a window), then DEFAULT and EXIT. s_cursor holds a row id. */
 static int visible_rows(int *rows) {
     int n = 0;
-    for (int r = 0; r < ROW_COUNT; r++)
-        if (r >= OPT_COUNT || option_enabled(r)) rows[n++] = r;
+    for (int r = 0; r <= row_exit(); r++)
+        if (r >= items() || item_enabled(r)) rows[n++] = r;
     return n;
 }
 
@@ -62,30 +82,35 @@ static int cursor_pos(const int *rows, int n) {
 
 void hle_display_draw(void) {
     gameui_begin(TEXT_ARENA, TEXT_ARENA_END, 0x8C07C6B0u);
-    gameui_print("DISPLAY OPTION", SCREEN_W / 2 - gameui_text_w("DISPLAY OPTION") / 2, TITLE_Y, COL_GOLD);
-    int rows[ROW_COUNT], n = visible_rows(rows);
+    const char *title = s_cheats ? "CHEATS" : "DISPLAY OPTION";
+    gameui_print(title, SCREEN_W / 2 - gameui_text_w(title) / 2, TITLE_Y, COL_GOLD);
+    int rows[ROW_MAX], n = visible_rows(rows), y = ROW_Y0;
     for (int i = 0; i < n; i++) {
         int r = rows[i], sel = r == s_cursor;
-        int y = ROW_Y0 + i * ROW_STEP + (r >= ROW_DEFAULT ? 4 : 0);
-        if (r >= OPT_COUNT) {
+        y = ROW_Y0 + i * ROW_STEP + (r >= row_default() ? 4 : 0);
+        if (r >= items()) {
             /* centred like the game's own DEFAULT / EXIT */
-            const char *label = r == ROW_DEFAULT ? "DEFAULT" : "EXIT";
+            const char *label = r == row_default() ? "DEFAULT" : "EXIT";
             gameui_print(label, SCREEN_W / 2 - gameui_text_w(label) / 2, y, sel ? COL_GOLD : COL_WHITE);
             continue;
         }
-        const char *label = option_label(r);
+        const char *label = item_label(r);
         gameui_print(label, LABEL_X, y, sel ? COL_GOLD : COL_WHITE);
         char v[40], b[48];
-        option_value(r, v, sizeof v);
+        item_value(r, v, sizeof v);
         snprintf(b, sizeof b, GAMEUI_LEFT " %s " GAMEUI_RIGHT, v);
         /* arrows on the selected value, if they fit beside the label */
         const char *shown = sel && VALUE_RIGHT - gameui_text_w(b) >= LABEL_X + gameui_text_w(label) + CHAR_W ? b : v;
         gameui_print(shown, VALUE_RIGHT - gameui_text_w(shown), y, sel ? COL_GOLD : COL_BLUE);
     }
+    if (s_cheats) {
+        gameui_center("AGAINST THE CPU ONLY", y + 20, COL_GREY);
+        gameui_center("FINAL BISON: START ON M.BISON", y + 30, COL_GREY);
+    }
 }
 
 static void move(int dir) {
-    int rows[ROW_COUNT], n = visible_rows(rows);
+    int rows[ROW_MAX], n = visible_rows(rows);
     s_cursor = rows[(cursor_pos(rows, n) + dir + n) % n];
     gameui_sound(SND_CURSOR);
 }
@@ -111,15 +136,20 @@ void hle_display_logic(void) {
     if (pressed & PAD_CANCEL) { leave(SND_CANCEL); return; }
     if (pressed & PAD_UP) { move(-1); return; }
     if (pressed & PAD_DOWN) { move(+1); return; }
-    if (s_cursor < OPT_COUNT && (pressed & (PAD_LEFT | PAD_RIGHT))) {
-        option_change(s_cursor, (pressed & PAD_LEFT) ? -1 : +1);
+    if (s_cursor < items() && (pressed & (PAD_LEFT | PAD_RIGHT))) {
+        item_change(s_cursor, (pressed & PAD_LEFT) ? -1 : +1);
         gameui_sound(SND_CURSOR);
         return;
     }
     if (pressed & PAD_OK) {
-        if (s_cursor < OPT_COUNT) { option_change(s_cursor, +1); gameui_sound(SND_OK); }
-        else if (s_cursor == ROW_DEFAULT) { options_reset(); gameui_sound(SND_OK); }
-        else leave(SND_OK);
+        if (s_cursor < items()) { item_change(s_cursor, +1); gameui_sound(SND_OK); }
+        else if (s_cursor == row_default()) {
+            if (s_cheats) cheats_reset();
+            else options_reset();
+            gameui_sound(SND_OK);
+        } else {
+            leave(SND_OK);
+        }
     }
 }
 
