@@ -240,11 +240,11 @@ def build_game(gen_dir, runtime_lib, out_exe, libs, zig=None, progress=None, str
         src = os.path.join(gen_dir, n)
         if cache_dir:
             h = hashlib.sha1()
-            for part in (os.path.basename(zig), os.path.dirname(zig), TARGETS[platform], " ".join(CFLAGS + list(extra_cflags))):
+            for part in (_zig_version(zig), TARGETS[platform], " ".join(CFLAGS + list(extra_cflags))):
                 h.update(part.encode() + b"\0")
             with open(src, "rb") as f:
                 h.update(f.read())
-            h.update(_header_fingerprint())
+            h.update(_header_fingerprint(gen_dir))
             jobs.append((src, os.path.join(obj_dir, f"{n[:-2]}-{h.hexdigest()[:16]}.o"), flags, True))
         else:
             jobs.append((src, os.path.join(obj_dir, n[:-2] + ".o"), flags))
@@ -267,19 +267,45 @@ def build_game(gen_dir, runtime_lib, out_exe, libs, zig=None, progress=None, str
     return out_exe
 
 
-_HEADERS = None
+_ZIG_VERSIONS = {}
 
 
-def _header_fingerprint():
-    """The runtime headers the generated C includes: a change to them recompiles everything."""
-    global _HEADERS
-    if _HEADERS is None:
+def _zig_version(zig):
+    """The compiler's version, not where it is: moving the app keeps the cache."""
+    if zig not in _ZIG_VERSIONS:
+        r = _run([zig, "version"], capture_output=True, text=True)
+        _ZIG_VERSIONS[zig] = "zig " + (r.stdout.strip() if r.returncode == 0 else zig)
+    return _ZIG_VERSIONS[zig]
+
+
+_HEADERS = {}
+
+
+def _header_fingerprint(gen_dir):
+    """The runtime headers the generated C includes (directly or through each
+    other): a change to one of them recompiles everything. Other runtime headers
+    don't matter here, so changing them never touches the cached objects."""
+    if gen_dir not in _HEADERS:
         import hashlib
-        h = hashlib.sha1()
+        import re
         rt = os.path.join(ROOT, "runtime")
-        for name in sorted(os.listdir(rt)):
-            if name.endswith(".h"):
-                with open(os.path.join(rt, name), "rb") as f:
-                    h.update(name.encode() + b"\0" + f.read())
-        _HEADERS = h.digest()
-    return _HEADERS
+        inc = re.compile(rb'^\s*#\s*include\s+"([^"]+)"', re.M)
+        todo = set()
+        for name in os.listdir(gen_dir):
+            if name.endswith((".c", ".h")):
+                with open(os.path.join(gen_dir, name), "rb") as f:
+                    todo.update(m.decode() for m in inc.findall(f.read()))
+        seen = {}
+        while todo:
+            name = todo.pop()
+            path = os.path.join(rt, name)
+            if name in seen or not os.path.isfile(path):
+                continue  # a generated header (sources are hashed themselves)
+            with open(path, "rb") as f:
+                seen[name] = f.read()
+            todo.update(m.decode() for m in inc.findall(seen[name]))
+        h = hashlib.sha1()
+        for name in sorted(seen):
+            h.update(name.encode() + b"\0" + seen[name])
+        _HEADERS[gen_dir] = h.digest()
+    return _HEADERS[gen_dir]
