@@ -1,7 +1,29 @@
 {
  "_about": "PSP -> Dreamcast mappings confirmed by hand where align.py has too few votes. Addresses only, no game data.",
  "globals": [
-  ["0x80f970", "0x80f990", "0x8c1888b4", "camera / scroll position (16.16 X at +0x10)"]
+  [
+   "0x80f970",
+   "0x80f990",
+   "0x8c1888b4",
+   "camera / scroll position (16.16 X at +0x10)"
+  ],
+  [
+   "0x39c9e0",
+   "0x39ca80",
+   "0x8c17fbc0",
+   "game state: the same layout below +0xA0 (+0x72 game mode, +0x35, +0x4A, +0x5D...); the Dreamcast keeps another block from +0xA0 (PSP 0x8082F8)"
+  ]
  ],
- "functions": {}
+ "functions": {
+  "0x1d044": "0x8c024568",
+  "0x1f338": "0x8c025930",
+  "0x1f3bc": "0x8c025998",
+  "0x5dedc": "0x8c04c6d8",
+  "0x5e068": "0x8c04c7f8",
+  "0x5df68": "0x8c04c73c",
+  "0x77e00": "0x8c059e8c",
+  "0x5fd4c": "0x8c04d974",
+  "0x5f114": "0x8c04d122"
+ },
+ "_functions_about": "checked by hand: 1D044 object physics step (pos += vel, vel += accel); 1F338/1F3BC menu object spawn/free (PSP objects 0x94 bytes, DC 0x90, same fields below 0x90); 5DEDC/5E068/5DF68 fighter state changes (5DF68 also sets PSP +0xC0 = 2 around its body); 77E00 CPU, 5FD4C, 5F114 their callees"
 }

@@ -225,7 +225,7 @@ def run(disc_dir, out_dir, report=None, progress=None):
     files.append("dispatch.c")
     # where they went, for the runtime to copy them at boot (runtime/chartables.c)
     ct = ['#include "chartables.h"', "const CharTable g_char_tables[] = {"]
-    ct += [f"  {{0x{t.dc:08X}u, {t.copy_count}u, {t.size}u, 0x{t.ext:08X}u}},  /* {t.note} */"
+    ct += [f"  {{0x{t.dc:08X}u, {t.copy_count}u, {t.size}u, 0x{t.ext:08X}u, {t.entries}u}},  /* {t.note} */"
            for t in chartables.TABLES]
     ct += ["};", f"const unsigned g_char_table_count = {len(chartables.TABLES)};", ""]
     write_if_changed(os.path.join(out_dir, "char_tables.c"), "\n".join(ct))

@@ -28,7 +28,7 @@ endif()
 file(STRINGS ${GEN}/sources.txt GEN_FILES)
 list(TRANSFORM GEN_FILES PREPEND ${GEN}/)
 # PSP characters (tools/psp/build_char.py), when built
-file(GLOB PSP_FILES ${CMAKE_SOURCE_DIR}/build/psp_out/psp_*.c)
+file(GLOB PSP_FILES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/build/psp_out/psp_*.c)
 if(PSP_FILES)
   list(APPEND GEN_FILES ${PSP_FILES})
 else()

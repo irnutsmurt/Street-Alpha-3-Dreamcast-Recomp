@@ -111,7 +111,7 @@ class Function:
         labels.add(self.entry)
         while todo:
             a = todo.pop()
-            while a not in seen and a < TEXT_END:
+            while a not in seen and 0x1000 <= a < TEXT_END:
                 seen.add(a)
                 i = b.insn(a)
                 if i.flow == mips.FLOW_NONE or i.flow in (mips.FLOW_CALL, mips.FLOW_CALL_REG) or i.name == "bal":

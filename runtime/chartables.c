@@ -13,11 +13,11 @@ static uint8_t *ext(uint32_t a, uint32_t n) {
 void char_tables_init(void) {
     for (unsigned i = 0; i < g_char_table_count; i++) {
         const CharTable *t = &g_char_tables[i];
-        uint8_t *dst = ext(t->ext, t->size * CHAR_TABLE_ENTRIES);
+        uint8_t *dst = ext(t->ext, t->size * t->entries);
         if (!dst) fatal("character table %08X: bad place %08X", t->dc, t->ext);
         memcpy(dst, ram_ptr(t->dc), t->count * t->size);
-        /* the new characters: Ryu's entry until the add-on says otherwise */
-        for (uint32_t c = t->count; c < CHAR_TABLE_ENTRIES; c++) memcpy(dst + c * t->size, dst, t->size);
+        /* the new entries: copies of the first (Ryu's) until the add-on says otherwise */
+        for (uint32_t c = t->count; c < t->entries; c++) memcpy(dst + c * t->size, dst, t->size);
     }
     for (unsigned off = 0; off + 8 <= g_psp_char_data_size;) {
         uint32_t a, n;
