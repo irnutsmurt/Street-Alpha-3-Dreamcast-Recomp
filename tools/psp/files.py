@@ -4,8 +4,8 @@ sections the PSP's doesn't have, and the order).
 
   PLnn.PAC  the character's archive (pl26_u.pac ...): sprite parts, tiles
             (twiddled), palettes (red and blue swapped) and the animation
-            sections 0xA and 0xD from the PSP's; the rest (sound) still
-            Ryu's, muted (SFA3_PSP_MUTE)
+            section 0xA from the PSP's; the voice bank (SOSB), the KO
+            echo's (SMPB) and the voice records (0xD) converted (sound.py)
   OPnn.PAC  the arcade prologue on the world map (op26_u.pac ...): bank 0x15
             (the portrait and the screen's frame), and after its palettes
             the text: the personal data (the PSP's section 0x10004, the same
@@ -17,7 +17,8 @@ sections the PSP's doesn't have, and the order).
             parts, 0x2 tiles, 0x3 palettes), the win quotes (0x0: their lines
             one after another; the PSP's 0x10002 has a 128-byte block a
             quote, and a quote of one line has no empty second one on the
-            Dreamcast) and the sound (0x40000000: still the template's)
+            Dreamcast) and the sound (0x40000000: one bank for every character,
+            the same on the PSP: the template's)
   BDnn.PAC  the pre-fight dialogue's sprites (bank 0x1A, when the PSP's has
             them) and the dialogue in Japanese (a texture: left blank). The
             English dialogue is in the character file (build_char.dc_text).
@@ -30,6 +31,7 @@ import struct
 import sys
 
 import pac
+import sound
 
 NEW = (0x26, 0x27, 0x28, 0x29)
 
@@ -44,7 +46,10 @@ def pl_file(psp, dc):
     d[0x100000] = s[0x100000]
     d[0x200000] = pac.convert_tiles(s[0x200000])
     d[0x400000] = pac.swap_rb(s[0x400000])
-    d[0xA], d[0xD] = s[0xA], s[0xD]
+    d[0xA] = s[0xA]
+    d[0x40000002], d[0x20000005] = sound.voice_bank(s[0x40000002], s[0x40008002],
+                                                    d[0x40000002], d[0x20000005])[:2]
+    d[0xD] = sound.voice_records(s[0xD])
     return pac.build(pac.order(dc), d)
 
 

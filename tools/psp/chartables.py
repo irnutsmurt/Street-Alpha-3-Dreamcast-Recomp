@@ -150,6 +150,14 @@ TABLES = [
     # --- not by character: the PSP's additions the new characters use ---
     T(0x8C0B39C8, 4, 0x2178C8, "cmd", count=64, entries=66, new=range(64, 66),
       note="command definitions (f_8C04EBDC): 0x40 QCB x2 ending back + K, 0x41 QCF x2 ending forward + K"),
+    # object handlers by type, filled as a fight starts from each character's descriptor lists of
+    # (type, handler) (f_8C046D6E). The PSP's tables are longer: the new characters' types run past
+    # the Dreamcast's ends, whose next tables they'd overwrite (Ingrid's word 28 types 45 and 46 are
+    # the stage objects' handlers 2 and 3 in 8C0A93E0)
+    T(0x8C0A9278, 4, None, count=47, entries=59, new=(),
+      note="descriptor word 29's handlers; new types 47-58 (Maki 47-49, Yun 50 56 57, Eagle 51 52, Ingrid 53-55 58)"),
+    T(0x8C0A9334, 4, None, count=43, entries=47, new=(),
+      note="descriptor word 28's handlers; new types 43-46 (Eagle 43, Yun 44, Ingrid 45 46)"),
 ]
 
 
