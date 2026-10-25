@@ -199,6 +199,9 @@ void psp_call_dc(uint32_t addr) {
     m.r[2] = g.r[0];
     m.r[3] = g.r[1];
     m.f[0] = g.fr[0];
+    /* the random byte: the PSP's (0x1CBE0) is unsigned, the Dreamcast's sign-extended;
+     * the PSP code's random % n would come out negative and index before its tables */
+    if (addr == 0x8C0246A4u) m.r[2] &= 0xFFu;
     if (trace && !trace_addr) {  /* SFA3_PSP_TRACE=0: every call from SFA3_WATCH_FROM's frame on */
         static long long from = -1;
         static int n;

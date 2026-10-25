@@ -16,21 +16,16 @@ Status (2026-10-25):
 
 - All four load as their own character numbers (`0x26`-`0x29`) and fight:
   intro, normals, specials and supers register for each
-  (build/test/char_test.sh), in every round (see Function map fixes).
+  (build/test/char_test.sh), in every round (see Function map fixes), with
+  their own voices (Sound, below).
 - Arcade mode: the select screen has the PSP's layout (Yun and Ingrid at the
   ends of the fifth row, Eagle and Maki in the last); picking one goes
   through the mode, -ism and speed screens, the world-map prologue (their
   own portrait, personal data and story: `OPnn.PAC`), the route (the PSP's,
   `arcade.py`), the VS screen (their portraits and names), the fight (the
   HUD's face and name), the win screen (their portrait and quotes:
-  `WINnn.PAC`), the wipe and the next stage. Checked end to end with Yun
-  (two fights); Eagle through his first round.
-- Sound is the blocker: the PSP's sound numbers play against the Dreamcast
-  template's banks (Ryu's, in the character file). `SFA3_PSP_MUTE` skips the
-  PSP code's own sound calls (testing), but sounds an animation carries go
-  through the Dreamcast's code (`f_8C04C1EE`): Eagle's round-win pose asks
-  for one whose record has type 4, and the sound queue then waits forever
-  (Dreamcast: Sound queue). The fix is converting the sound banks.
+  `WINnn.PAC`), the wipe and the next stage. Checked through the second
+  fight with each of the four (build/test/arc_full.sh).
 - Not yet: endings, the ranking's portraits, the PSP-only command checker Yun
   uses for command 0x20 (recompiled, but its button-configuration state is
   PSP-only and starts zeroed), Ingrid's background-scroll variables
@@ -342,6 +337,14 @@ with the add-on built, `build_char.py` adds the PSP's entries
 The PSP code's own references to these tables go to the moved copies, which
 have the PSP's 42-entry layout.
 
+Two tables by object type are moved the same way (with no entries added:
+the characters register their handlers as a fight starts, `f_8C046D6E`).
+The new characters' types run past the Dreamcast's ends: written there, a
+handler landed in the next table, the pool C one, whose types 2 and 3 are
+stage objects; on the next stage with such objects (the USA) Ingrid's code
+ran for them and wrote her pointers over another object, which then called
+garbage. Word 29's overflow went into word 28's table.
+
 | Dreamcast | Entry | PSP | What (where read) |
 |---|---|---|---|
 | `8C0B2088` | 4 | `0x2154E0` | `f_8C04BF86` |
@@ -388,6 +391,8 @@ have the PSP's 42-entry layout.
 | `8C0C11F4` | 4 | - | select: the name strip down the side: u16 spacing (0x8000: the name 8 up), u16 bank 8 part (`f_8C06B488`); the PSP's are two tables, `0x226914` (u16) and `0x2C8ABC` (u8 + `0xF4` = part) |
 | `8C0C142C`, `8C0C1478` | 2 | - | select: name banner (bank 8 part) and its width |
 | `8C0B39C8` | ptr | `0x2178C8` | command definitions (not by character): the PSP adds 0x40 and 0x41 |
+| `8C0A9278` | 4 | | object handlers by type, effect pool D (descriptor word 29): 47 -> 59 entries; the new characters' types 47-58 |
+| `8C0A9334` | 4 | | object handlers by type, projectiles (descriptor word 28): 43 -> 47 entries; types 43-46 |
 
 Found three ways: following the character number through the code
 (`tools/psp/dc_idtables.py`); a read-trace build comparing two fights
@@ -534,6 +539,17 @@ counterpart. Confirmed by hand (`tools/psp/manual_maps.json`):
 | `0x67B1C` | `8C05082C` | from neutral: start walking or crouching (reads the pause flags `8C17FC6D`/`8C17FBE6` and the lever, calls the checks `0x67CB8`/`0x67E08`/`0x67D68` = `8C05090C`/`8C0509DC`/`8C050982`; returns 1 when it started one) |
 | `0x67E50` | `8C0509FE` | its neighbour (calls `8C04D246`, `8C051CFE`) |
 
+### Return values
+
+A Dreamcast function called in a PSP one's place returns its result the
+Dreamcast's way: SH-4 byte and halfword loads sign-extend where the PSP's
+`lbu`/`andi` don't. The random byte (`f_8C0246A4`, the PSP's `0x1CBE0` via
+`0x1D368`) is the one that mattered: the PSP code's `random % n` came out
+negative half the time and read before its tables (Ingrid's and Eagle's win
+pose choice: Ingrid's then skipped setting her win's countdown, PSP +0x33C,
+and the round never ended). `psp_call_dc` returns it as the PSP's, 0-255.
+The other calls whose results the PSP code uses return words.
+
 ### Function map fixes
 
 The alignment (`align.py`) had paired `0x67B1C` with the animation stepper
@@ -575,9 +591,46 @@ module follows each (its dispatcher `0x1CB124` reads the table at
 `0x2B2310`). Yun's own descriptor builder `0x1BF93C` is a no-op at run time
 like `0x6AB48` (the build runs it).
 
+## Sound (`tools/psp/sound.py`)
+
+The voice numbering lines up: every character the two have in common has as
+many voice samples on the PSP as on the Dreamcast (Chun-Li, 0x09: 31 and 32),
+in the same order, and the voice records (section `0xD`) have the same
+format. So a new character's voice bank is its PSP samples, converted:
+
+- PSP: section `0x40000002` `PPHD` (+0x18: the offset of its `PPVA` chunk:
+  u32 size, 16, -1, 0, u32 entries - 1, -1, -1, then per sample offset,
+  rate, size, -1; rate and size -1 for an empty entry) and `0x40008002`, the
+  VAG data (Sony ADPCM, a silent 16-byte frame first). Rates 22050, 20182,
+  16000 and 11025 Hz.
+- Dreamcast: a `SOSB` voice bank, the `SMPB` KO echo bank and the records
+  (dreamcast.md, Sound). Each player's banks have `0x48000` and `0x5000`
+  bytes (`ZERO3.MLT`).
+- Room: Eagle's voices fit as they are (240 KB); Maki's, Yun's and Ingrid's
+  come to 335-352 KB as AICA ADPCM. Each sample is cut to its sound (the
+  silent first frame, the tail under 48), the KO scream (sample 0) to 1.8 s
+  (the echo bank holds it too), and then every sample above 12 kHz is played
+  at a lower rate, as little as fits: Maki 0.855 (22050 Hz -> 18853), Yun
+  0.88, Ingrid 0.89; a sample longer than 65535 (the AICA's end register)
+  lower still. The PSP's KO screams for the Dreamcast's characters are the
+  Dreamcast's with the echo mixed in (36412-36437 samples longer); the new
+  four's have no such tail.
+- Records of type 4: the PSP's sound queue (`0x5A4C`) turns them into type 0
+  on channel + 8 (a separate slot), a nonzero bank + 2 (Eagle's sample 28 and Yun's
+  26-36 play from their own banks so); the Dreamcast's
+  queue waits forever on them (the hang at Eagle's round-win pose). They're
+  written as type 0 on a channel offset (0-2) the character's other records
+  don't use; Ingrid's only stop, so they become none.
+- The common sounds (`SD_SE.BIN`, `SD_NR.BIN`; the PSP's `se_mid.pac`
+  `0x80000D00`, `0x80000E00`) are the same apart from a few entries that
+  point at the same sounds in other banks; the new characters use the
+  Dreamcast's.
+
+Checked with `SFA3_KEYON_LOG` (every voice start: address, length, pitch)
+and build/test/keyons.py, which matches them against the converted bank.
+
 ## Gaps
 
-- Sound: PPHD/VAG -> SOSB/SMPB, then drop `SFA3_PSP_MUTE`.
 - The VS screen's and the HUD's portraits and names, win screens and quotes
   (`win`, `bd`), endings (`end`), the ranking's portraits (`rk`), the move
   list texture (`0x10000E00`), versus mode's select screen, CPU behaviour,
@@ -594,6 +647,8 @@ like `0x6AB48` (the build runs it).
 | `SFA3_ADD=NAME=path;...` | add files to the disc |
 | `SFA3_FORCE_CHAR=player:hex` | write the character number every frame |
 | `SFA3_PSP_MUTE=1` | skip the PSP code's sound calls (not the animations' sounds) |
+| `SFA3_KEYON_LOG=1` | log each AICA voice start (address, loop, end, format, pitch, envelope, volume) |
+| `SFA3_PCM_DUMP=file` | write the mixed sound output (44.1 kHz stereo 16-bit) |
 | `SFA3_PSP_TRACE=addr` | trace one PSP function (`0`: all, from `SFA3_WATCH_FROM`) |
 | `SFA3_PSP_STUBS=frame` | log stub calls from that frame |
 | `SFA3_FILE_LOG=1` | log files opened by name, with the caller |
@@ -645,7 +700,11 @@ won by KOs, then after's commands; env `B3`, `FIGHT`, `R1`/`R2`, `ONE_KO`,
 `KO_OFF`, `AFTER_S`; a montage of the shots in the scratchpad, the shots then
 deleted), `arc_full.sh <name> <moves>` (one character all the way to the next
 stage with shots throughout: the fight follows the round state with
-`untileq`, the script waits on `mark`). Select moves from the cursor's start
+`untileq`, the script waits on `mark`; `EXTRA=` more environment).
+`char_test.sh <id> [name]` loads the add-on's whole set of files
+(`addon_files.sh`; its PITU.PAC goes with the runtime's HUD patches;
+`PLPAC=` another character file). `keyons.py <hex char> [player]` matches
+the keyon log against the character's converted voice bank. Select moves from the cursor's start
 (Ryu, row 3 column 0): Yun `down down`, Ingrid `right` x6 `down down`, Eagle
 `right right down down down`, Maki `right` x4 `down down down`.
 `vswin.sh <hex char> <name>` (Versus, two KOs, the win screen),

@@ -154,8 +154,7 @@ descriptor (39 words) to `*(fighter + 0x180)`.
 | 5, 7, 9 | tables of pointers (7: per -ism, read at +4 + ism x 4; 9: by the opponent's character, 38 lists of where a held opponent goes frame by frame: `f_8C05206E`, `f_8C0520F0`, `f_8C052180`, `f_8C052268`) |
 | 12-15 | data tables (pointer tables) |
 | 16-27 | code: 18 the per-frame state dispatcher, 19 the round intro, 20 the command check (special moves) |
-| 28, 29 | (number, code) lists; 29 (+0x74) patches the engine's jump table `8C0A9278` |
-| 30 | points 12 bytes before the descriptor: `[8, code, -1]`, then the descriptor |
+| 28, 29, 30 | (type, handler) lists ending in -1: as a fight starts (`f_8C046D6E`) each handler goes into the engine's dispatch table for that kind of object, 28 into `8C0A9334` (projectiles), 29 into `8C0A9278` (effect pool D), 30 into `8C0A900C` (word 30 often points 12 bytes before the descriptor: `[8, code, -1]`). Each character has its own type numbers |
 | 31 | engine function `8C04B378` |
 | 32-34 | palettes |
 | 36 | u16 list |
@@ -224,6 +223,31 @@ Allocators: `f_8C02554E(fighter, ...)` projectiles (pool by fighter +105),
 `f_8C02564C` / `25670` / `25694` / `256B8` effect pools A-D, `f_8C0256DC`
 the small pool. Each takes (kind, id) and returns the object (or 0).
 
+Each pool's objects run every frame through a table by their type (+2):
+
+| Dispatcher | Objects | Table | Entries | Filled by |
+|---|---|---|---|---|
+| `f_8C030120` | effect pool A, `8C1832A8`, 32 x `0xB0` | `8C0A900C` | (to `8C0A9278`) | descriptor word 30 |
+| `f_8C030170` | effect pool D, `8C185EA8`, 16 x `0xB0` | `8C0A9278` | 47 | descriptor word 29 |
+| `f_8C0301C0` | projectiles, `8C180E68`, 12 x `0x148` | `8C0A9334` | 43 | descriptor word 28 |
+| `f_8C0302F4` | effect pool C, `8C1853A8`, 16 x `0xB0` | `8C0A93E0` | 12+ | the program (stage objects: types 2-11 `8C03D33C`...) |
+
+The tables sit end to end, so a type past a table's end lands in the next
+one (see psp-characters.md, Character tables).
+
+## Action categories (fighter +5)
+
+`8C0B1C24`, 9 handlers. Category 4 (`f_8C04B338`) and 5 (`f_8C04B358`):
+while fighter +0x2E4 is 0 the character's own code runs (descriptor word 18
+and word 31); once it isn't, the common `f_8C04B3F2`, which sets bit
+(1 << fighter +0x131) in `8C17FC6B` every frame and runs
+`8C0B1F3C`[+0x2E4]. The round-over state waits for that byte: a fighter's
+win (or KO) sequence is done when its bit is set. `f_8C04D3AC` puts the
+winner into category 4 (and clears +0x294, the win pose a held button
+picks: 1-6).
+
+`f_8C0246A4`: the random number, a signed byte (`8C17FBC0` +0x40 its state).
+
 ## Sound
 
 `f_8C059F2C(object, side, sound, ...)`: sound number (high byte: category;
@@ -250,6 +274,53 @@ A fighter's animation can carry a sound: `f_8C04C15A(fighter, animation)`
 sets the animation and goes on into `f_8C04C1EE`, which plays sound
 (fighter +0x114)[fighter +0x122] (u16 list from the character's data, the
 index from the animation) through `f_8C059F2C`.
+
+Record tables: `8C1A452C` + 0x800 x n, n = 0..4 (128 records each): 0
+`SD_SE.BIN`, 1 `SD_NR.BIN` (the common sounds), 2-4 the voices of players
+1-3 (a character file's section `0xD`, 64 records: voice k is record k,
+bank 3 sample k). A record's bank byte 3 is the player's (`f_8C014094` adds
+the bank argument, `8C1A2128`[side] for voices). The channel is the
+record's +2 plus a per-side base (`8C0BA64C`: 0 for player 1, 3 for player
+2), at most 7.
+
+Sound memory (`ZERO3.MLT`, the Katana multi-unit file: 14 units of 32
+bytes: tag, bank, AICA address, size, offset in the file or -1, size in
+the file):
+
+| AICA | Unit | Size | What |
+|---|---|---|---|
+| `0x018000` | SMPB 0 | `0x23280` | music instruments |
+| `0x03B280` | SMSB 0 | `0x9C0` | sequences |
+| `0x03BC40` | SOSB 0 | `0x26E80` | common sounds |
+| `0x062AC0` | SOSB 1 | `0x4F840` | common sounds |
+| `0x0B2300` | SOSB 2 | `0x57940` | common sounds |
+| `0x109C40` | SMSB 1 | `0x100` | the KO echo's sequences |
+| `0x10A000` | SOSB 3 | `0x48000` | player 1's voices (from the character file) |
+| `0x152000` | SMPB 1 | `0x5000` | player 1's KO echo instrument |
+| `0x157000` | SOSB 4 | `0x48000` | player 2's voices |
+| `0x19F000` | SMPB 2 | `0x5000` | player 2's KO echo |
+| `0x1A4000` | SOSB 5 | `0x48000` | player 3's voices (Dramatic Battle) |
+| `0x1EC000` | SMPB 3 | `0xFFC0` | |
+| `0x1FBFC0`, `0x1FDFE0` | SPSR 0, 1 | `0x2000` | stream buffers |
+
+A character file's sound sections are staged at `8CD31740` and go to sound
+memory in whole 32-byte blocks: the sections are padded to them (the banks'
+own size fields aren't). Formats (the sound driver is MANATEE.DRV):
+
+- `SOSB` (one-shot bank): "SOSB", u32 1, u32 size (to the end of "ENDB"),
+  u32 count, count u32 offsets of `0x38`-byte "SOSP" records (an AICA
+  voice's registers: +4 address bits 16-22 and the format (`0x0100`: ADPCM,
+  `0x0200` looping), +6 address bits 0-15 (from the bank's start), +8 loop
+  start, +0xA end (samples), +0xC/+0xE envelope, +0x10 pitch (OCT/FNS:
+  `0x7800` is 22050 Hz), +0x16 direct send level, filter, +0x2C/+0x30 loop
+  start and end again, "ENDP" at +0x34), "SOSD", the samples (4-bit AICA
+  ADPCM, low nibble first, 4-byte aligned, padded with `0x80`), "ENDD",
+  "ENDB".
+- `SMPB` (MIDI program bank): the voice banks' KO echo bank is one program
+  with one split, the split record at +0xEC (its sample at +0x11C, the end
+  at +0xF2), the sample the voice bank's first (the KO scream), "ENDB".
+- `WINnn.PAC` section `0x40000000`: one SOSB (16 samples) for every
+  character.
 
 ## File names
 
