@@ -243,6 +243,15 @@ void video_vblank(void) {
     s_frames++;
     g_stats.vblanks++;
     cheats_frame();
+    {  /* SFA3_FORCE_CHAR=<player>:<hex id>: keep a fighter's character number (testing, debug) */
+        static int player = -2, id;
+        if (player == -2) {
+            const char *e = getenv("SFA3_FORCE_CHAR");
+            player = e ? atoi(e) : -1;
+            id = e && strchr(e, ':') ? (int)strtol(strchr(e, ':') + 1, NULL, 16) : 0;
+        }
+        if (player >= 0 && player < 4) W8(0x8C17FD38u + 0x44Cu * (uint32_t)player + 0x132u, (uint32_t)id);
+    }
     menu_tag(cheats_active() ? "CHEATS ON" : "");
     if (s_frames % 60 == 0) {
         static uint64_t last;

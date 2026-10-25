@@ -35,6 +35,17 @@ SETJMP_ADDR = 0x8C094584
 # return from every interrupt with R0 = 0.
 _var_literals = set()
 
+# Tables moved elsewhere (PSP characters, tools/psp): a literal inside one of
+# these ranges [lo, hi) is the moved table's address plus the same offset.
+RELOCATE = []
+
+
+def relocate(v):
+    for lo, hi, new in RELOCATE:
+        if lo <= v < hi:
+            return new + (v - lo)
+    return v
+
 
 def emit_insn(ins, pc, img):
     """C statement(s) for a non-control-flow instruction."""
@@ -55,7 +66,7 @@ def emit_insn(ins, pc, img):
         a = pcrel_addr(ins, pc)
         if a in _var_literals:  # the function writes this literal (see gen_function): read it
             return f"{Rn} = R32(0x{a:08X}u);"
-        return f"{Rn} = 0x{img.u32(a):08X}u;"
+        return f"{Rn} = 0x{relocate(img.u32(a)):08X}u;"
     if nm == "mova":
         return f"{R0} = 0x{pcrel_addr(ins, pc):08X}u;"
     if nm == "mov":
