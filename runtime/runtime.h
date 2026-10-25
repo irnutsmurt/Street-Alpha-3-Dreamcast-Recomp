@@ -83,3 +83,5 @@ void machine_reset_request(int det);
 #define EXT_RAM_BASE 0x98000000u
 #define EXT_RAM_SIZE (16u << 20)
 extern uint8_t *g_ext_ram;
+
+void read_trace_dump(const char *path);  /* read_trace.c (debug) */

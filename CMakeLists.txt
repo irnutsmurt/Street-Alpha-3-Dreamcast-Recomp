@@ -10,7 +10,18 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(SDL3 REQUIRED IMPORTED_TARGET sdl3)
 find_package(Vulkan REQUIRED)
 
-set(GEN ${CMAKE_SOURCE_DIR}/build/generated)
+# SFA3_GEN: another copy of the recompiled code (tools/read_trace.py makes an
+# instrumented one); SFA3_READ_TRACE: log which instructions read game data
+set(SFA3_GEN "" CACHE PATH "recompiled code directory (default build/generated)")
+option(SFA3_READ_TRACE "debug: record the game-data addresses each instruction reads" OFF)
+if(SFA3_GEN)
+  set(GEN ${SFA3_GEN})
+else()
+  set(GEN ${CMAKE_SOURCE_DIR}/build/generated)
+endif()
+if(SFA3_READ_TRACE)
+  add_compile_definitions(SFA3_READ_TRACE)
+endif()
 if(NOT EXISTS ${GEN}/sources.txt)
   message(FATAL_ERROR "No recompiled code found. Run ./sfa3port.py setup <your disc.gdi> first.")
 endif()
@@ -35,7 +46,7 @@ set(RUNTIME_SRC
   runtime/ta.c runtime/hle.c runtime/gdi.c runtime/maple.c runtime/aica.c
   runtime/overlay.c runtime/input_sdl.c runtime/task.c
   runtime/fiber.c runtime/sjlj.c runtime/arm_rt.c runtime/settings.c runtime/menu.c runtime/controls.c runtime/options.c runtime/display_menu.c runtime/buttoncfg.c runtime/pause_menu.c runtime/title_quit.c runtime/net.c runtime/netplay.c
-  runtime/gameui.c runtime/lobby.c runtime/sprite_swap.c runtime/cheats.c runtime/option_menu.c runtime/psp.c runtime/psp_load.c)
+  runtime/gameui.c runtime/lobby.c runtime/sprite_swap.c runtime/cheats.c runtime/option_menu.c runtime/psp.c runtime/psp_load.c runtime/read_trace.c runtime/chartables.c)
 if(RENDERER STREQUAL "null")
   list(APPEND RUNTIME_SRC runtime/renderer_null.c)
 else()

@@ -19,6 +19,7 @@ static int setenv(const char *name, const char *value, int overwrite) { (void)ov
 #include <string.h>
 
 #include "cheats.h"
+#include "chartables.h"
 #include "cpu.h"
 #include "input.h"
 #include "pvr.h"
@@ -175,6 +176,7 @@ static void machine_reset_state(int det) {
     fiber_kill_all();
     memcpy(ram_ptr(0x8C008000), s_ip_bin, sizeof s_ip_bin);
     memcpy(ram_ptr(0x8C010000), g_main_image, g_main_image_size);
+    char_tables_init();
     hle_reset();
     renderer_vram_block_written(0, 8u << 20);  /* every cached texture is stale */
     cpu_power_on();
@@ -434,6 +436,7 @@ int main(int argc, char **argv) {
     g_main_image_size = (uint32_t)load_file(path, 0x8C010000);
     g_main_image = malloc(g_main_image_size);
     memcpy(g_main_image, ram_ptr(0x8C010000), g_main_image_size);
+    char_tables_init();
     hle_init(gdi);
     maple_init(data_dir);
     aica_init();

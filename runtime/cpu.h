@@ -46,15 +46,26 @@ static inline int is_ram(uint32_t a) {
 }
 static inline uint8_t *ram_ptr(uint32_t a) { return g_ram + (a & 0x00FFFFFFu); }
 
+/* debug build (SFA3_READ_TRACE, tools/read_trace.py): the recompiled code
+ * keeps the running instruction's address in g_pc, and reads of the game's
+ * data and work RAM are recorded per instruction (read_trace.c) */
+#ifdef SFA3_READ_TRACE
+extern uint32_t g_pc;
+void read_trace_note(uint32_t a);
+#define READ_NOTE(a) do { if (((a) & 0x00FFFFFFu) - 0x00094000u < 0x0026C000u) read_trace_note(a); } while (0)
+#else
+#define READ_NOTE(a) ((void)0)
+#endif
 static inline uint32_t R8(uint32_t a) {
-    return is_ram(a) ? *ram_ptr(a) : mmio_read8(a);
+    if (is_ram(a)) { READ_NOTE(a); return *ram_ptr(a); }
+    return mmio_read8(a);
 }
 static inline uint32_t R16(uint32_t a) {
-    if (is_ram(a)) { uint16_t v; memcpy(&v, ram_ptr(a), 2); return v; }
+    if (is_ram(a)) { READ_NOTE(a); uint16_t v; memcpy(&v, ram_ptr(a), 2); return v; }
     return mmio_read16(a);
 }
 static inline uint32_t R32(uint32_t a) {
-    if (is_ram(a)) { uint32_t v; memcpy(&v, ram_ptr(a), 4); return v; }
+    if (is_ram(a)) { READ_NOTE(a); uint32_t v; memcpy(&v, ram_ptr(a), 4); return v; }
     return mmio_read32(a);
 }
 /* debug write watchpoint (SFA3_WATCH_WRITE=<address>): logs who writes a RAM byte */

@@ -231,6 +231,8 @@ static void control_file(PadState *st) {
     } else if (!strcmp(cmd, "vramdump")) {  /* vramdump <file>: write the 8 MB of video RAM (debug) */
         FILE *f = fopen(arg, "wb");
         if (f) { fwrite(g_vram, 1, 8 << 20, f); fclose(f); logf_("vramdump %s", arg); }
+    } else if (!strcmp(cmd, "rtdump")) {  /* rtdump <file>: the read trace (debug builds, read_trace.c) */
+        read_trace_dump(arg);
     } else if (!strcmp(cmd, "hist")) {  /* hist <start|stop>: log indirect call targets */
         if (!strcmp(arg, "start")) g_call_hist_on = 1;
         else { g_call_hist_on = 0; call_hist_dump(); }
