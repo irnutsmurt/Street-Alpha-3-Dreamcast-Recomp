@@ -629,6 +629,18 @@ format. So a new character's voice bank is its PSP samples, converted:
 Checked with `SFA3_KEYON_LOG` (every voice start: address, length, pitch)
 and build/test/keyons.py, which matches them against the converted bank.
 
+## Palettes
+
+A character's 6 colour choices have 5 palettes each on the Dreamcast (30):
+a player's palette base (`8C0B21AC`[mode x 4 + side], fighter +0xD) is 0,
+5 or 10 in the 64-palette buffer `8C1A2174` (uploaded by `f_8C015D60`;
+slots up to 43 and 56-63 are in use in a fight). The PSP's bases are 0,
+0x40, 0x48 (`0x215622`), and Ingrid has 8 palettes a choice (48): the
+Dreamcast's choice c read her palettes 5c..5c+4, a mix of two of hers (her
+hair red). `files.palettes` keeps each choice's first 5: her sprites use
+sub-palettes 0-4 but for part `0x2A4` (sub-palette 5, a blue streak), and
+her effect objects add small offsets to her base (`p_1C7974`).
+
 ## Gaps
 
 - The VS screen's and the HUD's portraits and names, win screens and quotes
