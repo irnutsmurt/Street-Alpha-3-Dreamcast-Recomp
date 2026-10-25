@@ -125,16 +125,29 @@ static void scripted_input(PadState *st) {
 int g_shot_request, g_shot_present_request;
 static char s_ctl_queue[64][256];
 static int s_ctl_head, s_ctl_tail, s_ctl_timer;
-static uint16_t s_ctl_hold;
+static uint32_t s_ctl_until;  /* "untilnz": the address waited on */
+static int s_ctl_until_left;
+static uint32_t s_ctl_until_button;  /* pressed every 40 frames meanwhile (0: none) */
+static uint32_t s_ctl_hold;
 static int s_ctl_port;  /* 0 = player 1 ("press"), 1 = player 2 ("press2") */
-static uint16_t s_ctl_held[2];  /* "hold <1|2> <buttons|none>": held until changed */
+static uint32_t s_ctl_held[2];  /* "hold <1|2> <buttons|none>": held until changed */
+/* the triggers, pressed fully, as bits above the pad's 16 */
+#define CTL_L (1u << 16)
+#define CTL_R (1u << 17)
 
-static uint16_t button_bit(const char *name) {
-    static const struct { const char *name; uint16_t bit; } names[] = {
+static void ctl_apply(PadState *st, uint32_t bits) {
+    st->buttons |= (uint16_t)bits;
+    if (bits & CTL_L) st->ltrig = 255;
+    if (bits & CTL_R) st->rtrig = 255;
+}
+
+static uint32_t button_bit(const char *name) {
+    static const struct { const char *name; uint32_t bit; } names[] = {
         {"start", BTN_START}, {"a", BTN_A}, {"b", BTN_B}, {"x", BTN_X}, {"y", BTN_Y},
         {"up", BTN_UP}, {"down", BTN_DOWN}, {"left", BTN_LEFT}, {"right", BTN_RIGHT},
+        {"l", CTL_L}, {"r", CTL_R},
     };
-    uint16_t bits = 0;  /* "start+a": both */
+    uint32_t bits = 0;  /* "start+a": both */
     for (const char *p = name; *p;) {
         size_t len = strcspn(p, "+");
         for (size_t i = 0; i < sizeof names / sizeof names[0]; i++)
@@ -162,12 +175,20 @@ static void control_file(PadState *st) {
         fclose(f);
         remove(path);
     }
-    for (int p = 0; p < 2; p++) st[p].buttons |= s_ctl_held[p];
+    for (int p = 0; p < 2; p++) ctl_apply(&st[p], s_ctl_held[p]);
     if (s_ctl_timer > 0) {
         s_ctl_timer--;
-        if (s_ctl_timer > 10) st[s_ctl_port].buttons |= s_ctl_hold;
+        if (s_ctl_timer > 10) ctl_apply(&st[s_ctl_port], s_ctl_hold);
         return;
     }
+    if (s_ctl_until && s_ctl_until_left > 0) {  /* untilnz: hold the queue until the guest u16 isn't 0 */
+        s_ctl_until_left--;
+        if (!R16(s_ctl_until)) {
+            if (s_ctl_until_button && s_ctl_until_left % 40 < 8) ctl_apply(&st[0], s_ctl_until_button);
+            return;
+        }
+    }
+    s_ctl_until = 0;
     s_ctl_hold = 0;
     if (s_ctl_head == s_ctl_tail) return;
     char cmd[32], arg[200] = "";
@@ -185,6 +206,13 @@ static void control_file(PadState *st) {
         s_ctl_held[atoi(arg) == 2] = button_bit(what);
     } else if (!strcmp(cmd, "wait")) {
         s_ctl_timer = atoi(arg);
+    } else if (!strcmp(cmd, "untilnz")) {  /* untilnz <hex address> [frames [button]]: wait until the guest u16
+                                              * there isn't 0, pressing player 1's button every 40 frames (testing) */
+        char button[32] = "";
+        sscanf(line, "%*s %*s %*d %31s", button);
+        s_ctl_until = (uint32_t)strtoul(arg, NULL, 16);
+        s_ctl_until_left = n > 0 ? n : 6000;
+        s_ctl_until_button = button[0] ? button_bit(button) : 0;
     } else if (!strcmp(cmd, "shot")) {
         g_shot_request = 1;
     } else if (!strcmp(cmd, "shotp")) {  /* presented image: includes scanlines and the menu */

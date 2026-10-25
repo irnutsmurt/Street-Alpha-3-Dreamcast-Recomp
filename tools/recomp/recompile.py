@@ -46,11 +46,22 @@ HOOKS = {
     0x8C02D3E0: "hle_network_init",
     0x8C02D4C0: "hle_network_logic",
     0x8C06273C: "hle_mode_menu_input",  # Mode Menu input: start a mode directly (lobby, autopilot)
-    0x8C01348E: "hle_pac_section",
-    0x8C012C80: "hle_open_file",  # opening a file by name (logged with SFA3_FILE_LOG)  # a character archive's next section: big sprite tiles to extension memory
+    0x8C01348E: "hle_pac_section",  # a character archive's next section: big sprite tiles to extension memory
+    0x8C05206E: "hle_throw_a",  # throws: the PSP characters as the held opponent (psp_load.c)
+    0x8C0520F0: "hle_throw_b",
+    0x8C052180: "hle_throw_c",
+    0x8C052268: "hle_throw_d",
+    0x8C06443C: "hle_hud",  # the fight HUD: the PSP characters' faces and names (psp_load.c)
+    0x8C069D34: "hle_vs_palette",  # VS portraits' palettes: the PSP characters' (psp_load.c)
+    0x8C069DCC: "hle_count_use",  # the use counters (saved): not for the PSP characters (psp_load.c)
+    0x8C0126F4: "hle_open_numbered",  # opening a file by its names[] number: the PSP characters' (psp_load.c)
+    0x8C012C80: "hle_open_file",    # opening a file by name (logged with SFA3_FILE_LOG)
+    0x8C018E9C: "hle_sprite_draw",  # debug: SFA3_SPRITE_LOG (sprite_log.c)
+    0x8C069D64: "hle_select_palette",  # select screen palettes: the PSP characters' portraits (psp_load.c)
+    0x8C018084: "hle_layout_draw",  # layouts (select screen): the PSP characters' extra cells (psp_load.c)
 }
 # Hooked functions whose original body is still emitted, as <name>_orig.
-KEEP_ORIGINAL = {0x8C012C80, 0x8C01348E, 0x8C07AF3C, 0x8C07D988, 0x8C0625E0, 0x8C02EB8C, 0x8C02EE26, 0x8C07B7B4, 0x8C07D2E0, 0x8C07CD5A, 0x8C07CE14, 0x8C094510, 0x8C0100BC, 0x8C07BC42, 0x8C07E17C, 0x8C06273C}
+KEEP_ORIGINAL = {0x8C06443C, 0x8C05206E, 0x8C0520F0, 0x8C052180, 0x8C052268, 0x8C069D34, 0x8C069DCC, 0x8C0126F4, 0x8C012C80, 0x8C018E9C, 0x8C069D64, 0x8C018084, 0x8C01348E, 0x8C07AF3C, 0x8C07D988, 0x8C0625E0, 0x8C02EB8C, 0x8C02EE26, 0x8C07B7B4, 0x8C07D2E0, 0x8C07CD5A, 0x8C07CE14, 0x8C094510, 0x8C0100BC, 0x8C07BC42, 0x8C07E17C, 0x8C06273C}
 
 
 def extra_entries():

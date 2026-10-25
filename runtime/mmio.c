@@ -31,6 +31,19 @@ static void unknown(const char *kind, uint32_t a, uint32_t v) {
     if (s_seen[h] < 2) {
         s_seen[h]++;
         logf_("mmio %s %08X = %08X (pr=%08X)", kind, a, v, g.pr);
+        /* SFA3_MMIO_BT=<hex address>: the host call stack (recompiled functions
+         * by name) of the first such access in that address's 16 MB (debug) */
+        static int bt = -1;
+        static uint32_t bt_area;
+        if (bt < 0) {
+            const char *e = getenv("SFA3_MMIO_BT");
+            bt = e != NULL;
+            bt_area = e ? (uint32_t)strtoul(e, NULL, 16) >> 24 : 0;
+        }
+        if (bt && a >> 24 == bt_area) {
+            bt = 0;
+            log_backtrace("mmio");
+        }
     }
 }
 

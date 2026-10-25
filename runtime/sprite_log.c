@@ -1,0 +1,43 @@
+/* Debug: which sprite parts the game draws (SFA3_SPRITE_LOG=<frame>).
+ *
+ * f_8C018E9C draws one sprite part: r5 the object, r6 the part's 12-byte
+ * record, r7 the start of the object's bank of records (8C1A1F48[obj+0x46]).
+ * Every part drawn in that frame goes to the log with its object, bank, part
+ * number and the caller, to find which object draws what on a screen.
+ * SFA3_SPRITE_FIND=<part>: where a part number is drawn (any bank, any frame). */
+#include <stdlib.h>
+
+#include "cpu.h"
+#include "runtime.h"
+
+void f_8C018E9C_orig(void);
+extern uint64_t g_vblank_count;
+
+void hle_sprite_draw(void) {
+    static int init;
+    static uint64_t frame;
+    if (!init) {
+        init = 1;
+        const char *e = getenv("SFA3_SPRITE_LOG");
+        frame = e ? strtoull(e, NULL, 0) : 0;
+    }
+    {   /* SFA3_SPRITE_FIND=<hex part>: the first 20 draws of that part number, any bank, with the frame */
+        static int find = -2, found;
+        if (find == -2) { const char *e = getenv("SFA3_SPRITE_FIND"); find = e ? (int)strtol(e, NULL, 16) : -1; }
+        uint32_t obj = g.r[5], rec = g.r[6], base = g.r[7];
+        if (find >= 0 && rec >= base && (rec - base) / 12 == (uint32_t)find && found < 20) {
+            found++;
+            logf_("sprite find: frame %llu obj %08X bank %X part %X pos %d,%d anim %08X caller %08X",
+                  (unsigned long long)g_vblank_count, obj, R16(obj + 0x46), find, (int16_t)R16(obj + 0x12),
+                  (int16_t)R16(obj + 0x16), R32(obj + 0x1C), g.pr);
+        }
+    }
+    if (frame && g_vblank_count == frame) {
+        uint32_t obj = g.r[5], rec = g.r[6], base = g.r[7];
+        logf_("sprite: obj %08X bank %X part %X rec %08X pos %d,%d anim %08X caller %08X", obj, R16(obj + 0x46),
+              rec >= base ? (rec - base) / 12 : 0xFFFFu, rec, (int16_t)R16(obj + 0x12), (int16_t)R16(obj + 0x16),
+              R32(obj + 0x1C), g.pr);
+    }
+    f_8C018E9C_orig();
+}
+
