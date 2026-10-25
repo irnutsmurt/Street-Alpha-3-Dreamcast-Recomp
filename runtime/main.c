@@ -215,6 +215,7 @@ void watch_hit(uint32_t a, uint32_t v, int size) {
     int len = 0;
     for (int i = 1; i < k && names && len < 400; i++) {
         const char *f = strstr(names[i], "(f_");
+        if (!f) f = strstr(names[i], "(p_");  /* PSP character code */
         if (f) len += snprintf(buf + len, sizeof buf - (size_t)len, " %.12s", f + 1);
     }
     free(names);

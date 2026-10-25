@@ -7,3 +7,4 @@ const PspCode g_psp_code[] = {{0, 0}};
 const unsigned g_psp_code_count = 0;
 const PspFn g_psp_fns[] = {0};
 const unsigned g_psp_fn_count = 0;
+const uint32_t g_psp_fn_addr[] = {0};

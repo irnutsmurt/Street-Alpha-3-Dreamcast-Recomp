@@ -1,5 +1,6 @@
 /* PVR register file, sync pulse generator status, and render start. */
 #include <SDL3/SDL.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
@@ -66,7 +67,10 @@ static void start_render(void) {
     g_stats.renders++;
     PvrFrame *f = ta_frame_for(REG(PVR_PARAM_BASE));
     static int logged;
-    if (f && (g_trace || logged++ < 30)) {
+    static long long from = -2;  /* SFA3_RENDER_LOG=<frame>: log every render from then on (debug) */
+    if (from == -2) from = getenv("SFA3_RENDER_LOG") ? atoll(getenv("SFA3_RENDER_LOG")) : -1;
+    extern uint64_t g_vblank_count;
+    if (f && (g_trace || logged++ < 30 || (from >= 0 && (long long)g_vblank_count >= from && logged < 400))) {
         int counts[LIST_COUNT] = {0};
         for (uint32_t i = 0; i < f->npolys; i++) if (f->polys[i].list < LIST_COUNT) counts[f->polys[i].list]++;
         logf_("render: param=%06X fb_w=%06X polys=%u verts=%u (op %d pt %d tr %d)", REG(PVR_PARAM_BASE),

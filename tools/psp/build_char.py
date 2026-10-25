@@ -147,6 +147,12 @@ class Build:
         mp = json.load(open(maps))
         self.fmap = {int(k, 16): int(v, 16) for k, v in mp["functions"].items()}
         self.gsegs = [(int(a, 16), int(b, 16), int(c, 16)) for a, b, c in mp["globals"]]
+        manual = json.load(open(os.path.join(HERE, "manual_maps.json")))
+        for g in manual["globals"]:  # checked by hand: these win over the voted ones
+            lo, hi, dc = (int(x, 16) for x in g[:3])
+            self.gsegs = [s for s in self.gsegs if s[1] <= lo or s[0] >= hi] + [(lo, hi, dc)]
+        self.fmap.update({int(k, 16): int(v, 16) for k, v in manual["functions"].items()})
+        self.gsegs.sort()
         self.descs = descriptors(self.boot)
         order = sorted(self.descs)
         starts = {c: min(w[k] for k in CODE_WORDS if w[k]) for c, (a, w) in self.descs.items()}
@@ -238,10 +244,20 @@ class Build:
                 shared.add(a & ~0xF)
         ranges = []
         for a in sorted(shared):
-            if ranges and a <= ranges[-1][1] + 0x40:
-                ranges[-1][1] = max(ranges[-1][1], a + 0x40)
+            if ranges and a <= ranges[-1][1] + 0x10:
+                ranges[-1][1] = max(ranges[-1][1], a + 0x10)
             else:
-                ranges.append([a, a + 0x40])
+                ranges.append([a, a + 0x10])
+        # the shared palettes are copied whole
+        ranges = [[min(lo, PALETTES[0]) if PALETTES[0] <= lo < PALETTES[1] else lo,
+                   max(hi, PALETTES[1]) if PALETTES[0] <= lo < PALETTES[1] else hi] for lo, hi in ranges]
+        merged = []
+        for lo, hi in sorted(ranges):
+            if merged and lo <= merged[-1][1]:
+                merged[-1][1] = max(merged[-1][1], hi)
+            else:
+                merged.append([lo, hi])
+        ranges = merged
         self.shared = []
         off = (off + 15) & ~15
         for lo, hi in ranges:
@@ -362,6 +378,8 @@ class Writer:
         g = b.global_dc(v)
         if g is not None:
             return g
+        if PSP_FIGHTERS <= v < PSP_FIGHTERS_END and (v - PSP_FIGHTERS) % 0x498 == 0:
+            return 0x8C17FD38 + (v - PSP_FIGHTERS) // 0x498 * 0x44C  # a fighter
         b.problems.append(f"{c.cid:02X}: data pointer {v:06X} with no counterpart")
         return 0
 
@@ -452,6 +470,7 @@ def emit_c(b, out_dir):
         f.write("\n".join(head + protos + [""]))
         f.write("\nconst PspFn g_psp_fns[] = {\n" + "".join(f"    p_{a:06X},\n" for a in b.order) + "};\n")
         f.write(f"const unsigned g_psp_fn_count = {len(b.order)};\n")
+        f.write("const uint32_t g_psp_fn_addr[] = {" + ", ".join(f"0x{a:06X}u" for a in b.order) + "};\n")
         f.write("const PspRegion g_psp_regions[] = {\n" +
                 "".join(f"    {{0x{lo:06X}u, 0x{hi:06X}u, {k}, 0x{base:08X}u}},\n" for lo, hi, k, base in regions) + "};\n")
         f.write(f"const unsigned g_psp_region_count = {len(regions)};\n")
