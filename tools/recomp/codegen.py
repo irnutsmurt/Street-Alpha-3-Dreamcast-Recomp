@@ -60,7 +60,7 @@ def emit_insn(ins, pc, img):
     T = "g.t"
 
     # ---- data movement ----
-    if pc in IMMEDIATE and nm in ("mov #imm", "mov.w@pc"):
+    if pc in IMMEDIATE and nm in ("mov #imm", "mov.w@pc", "mov.l@pc"):
         return f"{Rn} = R32(0x{IMMEDIATE[pc]:08X}u);"
     if pc in IMMEDIATE and nm == "add #imm":
         return f"{Rn} += R32(0x{IMMEDIATE[pc]:08X}u);"

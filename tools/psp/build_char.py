@@ -704,6 +704,13 @@ def main():
     patches += hud_patches
     screen_info["hud_parts"] = [hud_parts[c] for c in sorted(hud_parts)]
     print(f"fight HUD: PITU.PAC {len(pitu)} bytes")
+    import worldtour
+    world, world_patches = worldtour.build(
+        open(os.path.join(dc_dir, "WORLD.PAC"), "rb").read(), open(os.path.join(psp_data, "world_u.pac"), "rb").read(),
+        b.boot.data)
+    open(os.path.join(out_dir, "WORLD.PAC"), "wb").write(world)
+    patches += world_patches
+    print(f"World Tour: WORLD.PAC {len(world)} bytes")
     import files
     for name, size in files.build(psp_data, dc_dir, out_dir, [cid for cid, _ in pairs]):
         print(f"{name}: {size} bytes")
