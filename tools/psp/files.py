@@ -3,7 +3,8 @@ PSP's file for the character and a Dreamcast file of the same kind (the
 sections the PSP's doesn't have, and the order).
 
   PLnn.PAC  the character's archive (pl26_u.pac ...): sprite parts, tiles
-            (twiddled), palettes (red and blue swapped) and the animation
+            (twiddled), palettes (red and blue swapped; 5 a colour choice:
+            Ingrid's 8 cut to their first 5) and the animation
             section 0xA from the PSP's; the voice bank (SOSB), the KO
             echo's (SMPB) and the voice records (0xD) converted (sound.py)
   OPnn.PAC  the arcade prologue on the world map (op26_u.pac ...): bank 0x15
@@ -45,12 +46,23 @@ def pl_file(psp, dc):
     s, d = pac.sections(psp), pac.sections(dc)
     d[0x100000] = s[0x100000]
     d[0x200000] = pac.convert_tiles(s[0x200000])
-    d[0x400000] = pac.swap_rb(s[0x400000])
+    d[0x400000] = pac.swap_rb(palettes(s[0x400000]))
     d[0xA] = s[0xA]
     d[0x40000002], d[0x20000005] = sound.voice_bank(s[0x40000002], s[0x40008002],
                                                     d[0x40000002], d[0x20000005])[:2]
     d[0xD] = sound.voice_records(s[0xD])
     return pac.build(pac.order(dc), d)
+
+
+def palettes(sec, choices=6, dc_per=5):
+    """a character's palettes for its 6 colour choices as the Dreamcast keeps
+    them, 5 a choice (a player has 5 slots: bases 0, 5, 10, 8C0B21AC); the
+    PSP's Ingrid has 8 a choice (its players' bases are 0, 0x40, 0x48): her
+    sprites use the first 5 but for one part (0x2A4, sub-palette 5)"""
+    per = len(sec) // 32 // choices
+    if per == dc_per:
+        return sec
+    return b"".join(sec[32 * per * c:32 * (per * c + dc_per)] for c in range(choices))
 
 
 def op_file(psp, dc):
