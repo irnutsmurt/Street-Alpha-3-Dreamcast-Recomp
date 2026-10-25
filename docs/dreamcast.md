@@ -232,6 +232,25 @@ the camera's. It queues a command (`f_8C014094`) on `8C1A3F9C`; the main
 loop's `f_8C01424C` sends them to the sound CPU and waits on some (an entry
 reads `FFFF` when done).
 
+Sound queue: 64 entries of 8 bytes at `8C1A3F9C` (u16 command, u16
+channel, two u16 arguments), read index `8C1A419C`, write index `8C1A419D`
+(u8, & 63), added by `f_8C01421E(command, channel, a, b)`; cleared by
+`f_8C014034`/`f_8C014FF0`. `f_8C014094(bank, channel, sound, pan)` looks the
+sound up: `8C1A3F7C`[(sound >> 8 & 15) + bank] points at 16-byte records,
+record = that + (sound & 0xFF) x 16 (+0 u16 command word, `FFFF`: none; +2
+channel offset; +8 volume; +10 pan / flags), and queues a group: commands 2,
+8 (+8), 9 (pan), A, then 1 (play), each `(record's high byte << 8) |
+command`. `f_8C01424C` handles entries whose type (bits 8-11) is 0
+(`f_8C014384`) or 1 (`f_8C014454`); any other type it waits on until the
+entry reads `FFFF`, which nothing writes: a record of another type hangs the
+game (the main loop spins inside `f_8C01424C`, nothing renders). The
+Dreamcast's own data never has one; a sound number past a bank's records can.
+
+A fighter's animation can carry a sound: `f_8C04C15A(fighter, animation)`
+sets the animation and goes on into `f_8C04C1EE`, which plays sound
+(fighter +0x114)[fighter +0x122] (u16 list from the character's data, the
+index from the animation) through `f_8C059F2C`.
+
 ## File names
 
 `8C09895C`: 271 pointers to file names. `f_8C0126F4(number)` opens
