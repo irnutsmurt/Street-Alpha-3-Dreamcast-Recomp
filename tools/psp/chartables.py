@@ -43,7 +43,7 @@ EXT_SELECT = 0x98E40000  # the select screens' records (screens.py)
 EXT_END = 0x98E80000     # (build_char.py: the PSP-only variables from here)
 EXT_IMM = 0x98DFF000     # constants of the game's code the add-on can change (IMMEDIATES)
 
-# Instructions whose constant (mov #imm, add #imm, mov.w @(disp,PC)) the recompiled code reads
+# Instructions whose constant (mov #imm, add #imm, cmp/eq #imm, mov.w/mov.l @(disp,PC)) the recompiled code reads
 # from EXT_IMM + 4 x index instead: the runtime writes the instructions' own values there at boot
 # (runtime/chartables.c) and the add-on's patches change some (screens.py: the versus grid's 7th row)
 IMMEDIATES = [
@@ -56,6 +56,8 @@ IMMEDIATES = [
     (0x8C06F868, "the same, its value"),
     (0x8C06F892, "versus select: the STAGE line's y (0xBE)"),
     (0x8C06F8A4, "the same, its value"),
+    (0x8C01C520, "World Tour: room for bank 0x1D's tiles (WORLD.PAC), malloc'd (0x30000; f_8C01C508)"),
+    (0x8C01C600, "the same (f_8C01C5E8)"),
 ]
 
 
@@ -171,6 +173,7 @@ TABLES = [
     T(0x8C0C11F4, 4, None, note="select: the name strip down the side: u16 spacing (0x8000: name 8 up), u16 bank 8 part (f_8C06B488)"),
     T(0x8C0C142C, 2, None, note="select: name banner, a bank 8 part (f_8C06C866)"),
     T(0x8C0BE45A, 2, None, note="a character's face: bank B part (f_8C067E34, f_8C06EFAC; versus' World Tour entries)"),
+    T(0x8C0AB7D0, 2, None, note="World Tour: the character's banner, the first of 3 bank 0x1D parts (WORLD.PAC; f_8C0366D0)"),
     T(0x8C0C1478, 2, None, note="select: name banner width (f_8C06C866)"),
     # --- not by character: the PSP's additions the new characters use ---
     T(0x8C0B39C8, 4, 0x2178C8, "cmd", count=64, entries=66, new=range(64, 66),

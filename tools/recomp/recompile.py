@@ -97,6 +97,8 @@ def immediate_value(img, a):
     if ins.name == "mov.w@pc":
         v = img.u16(sh4.pcrel_addr(ins, a))
         return (v - 0x10000 if v & 0x8000 else v) & 0xFFFFFFFF
+    if ins.name == "mov.l@pc":
+        return img.u32(sh4.pcrel_addr(ins, a))
     raise ValueError(f"{a:08X}: {ins.name} has no constant to read from the memory")
 
 
