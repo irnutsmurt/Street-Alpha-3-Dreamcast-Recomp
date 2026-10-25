@@ -40,6 +40,11 @@ _var_literals = set()
 RELOCATE = []
 
 
+# Instructions whose constant is read from the guest memory instead: address -> where
+# (tools/psp/chartables.py, IMMEDIATES)
+IMMEDIATE = {}
+
+
 def relocate(v):
     for lo, hi, new in RELOCATE:
         if lo <= v < hi:
@@ -55,6 +60,12 @@ def emit_insn(ins, pc, img):
     T = "g.t"
 
     # ---- data movement ----
+    if pc in IMMEDIATE and nm in ("mov #imm", "mov.w@pc"):
+        return f"{Rn} = R32(0x{IMMEDIATE[pc]:08X}u);"
+    if pc in IMMEDIATE and nm == "add #imm":
+        return f"{Rn} += R32(0x{IMMEDIATE[pc]:08X}u);"
+    if pc in IMMEDIATE and nm == "cmp/eq #imm":
+        return f"{T} = ({R0} == R32(0x{IMMEDIATE[pc]:08X}u));"
     if nm == "mov #imm":
         return f"{Rn} = {s8(i) & 0xFFFFFFFF}u;"
     if nm == "mov.w@pc":

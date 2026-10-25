@@ -16,6 +16,13 @@ typedef struct {
 extern const CharTable g_char_tables[];
 extern const unsigned g_char_table_count;
 
+/* constants of the game's code read from the memory (chartables.py, IMMEDIATES):
+ * the instructions' own values, written at g_imm_base at boot (the add-on's
+ * patches change some) */
+extern const uint32_t g_imm_base;
+extern const uint32_t g_imm_defaults[];
+extern const unsigned g_imm_count;
+
 /* the PSP characters' entries (psp_tables.c from tools/psp/build_char.py, or
  * psp_none.c): records of u32 address, u32 length, the bytes, padded to 4 */
 extern const uint8_t g_psp_char_data[];

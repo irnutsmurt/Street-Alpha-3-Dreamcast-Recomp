@@ -401,8 +401,20 @@ Arcade "SELECT PLAYER" screen:
 After the pick: mode (NORMAL, MAZI, SAIKYO, CLASSIC), -ism, speed, then
 the world map (below).
 
-Versus screen: cursor `f_8C070648`, grid `8C0C1D84` (7 x 6, the sixth row
-filled by `f_8C06EFAC` with secret characters in some modes).
+Versus screen (VS MODE, from `SELECT.PAC`): grid `8C0C1D84` (7 x 6; FF
+bytes follow it), random cells (`0x40`, `0x41`) at the ends of row 4. Row 5
+is the World Tour entries (characters saved from World Tour, slots at
+`8C18AFD0` + n x `0x354`): `f_8C06EFAC` (the screen's setup) writes them
+into cells 35 + `8C0C1DD8`[n] (columns 0, 1, 2, 4, 5, 6; FF for an empty
+slot or in modes 3/13) and their faces (`8C0BE45A`[character], else the
+ENTRY box `8C0BE4A6`[n]) into the layout records; `f_8C0703CC` takes a cell
+in row 5 (cursor +22) whose column is in `8C0C1DD8` for an entry. The layout
+`8C0C0714`: the faces list (rows from the bottom, y = -64 + 24 x row, x =
+-88 + 24 x column; the entries' records first, skipped until filled), then
+the frames list from record 41 (part `0x27`; the entries' boxes `0x32`-
+`0x38`). The cursor `f_8C070648` wraps columns at 6 and rows at 5
+(`8C0706E4`), skipping FF cells. `f_8C06F7A4` prints the bottom lines:
+"SPEED:" at (120, `0xAE`), "STAGE:" at (114, `0xBE`), their values after.
 
 Objects pick an animation by kind and character: `8C0BED8C` holds a pointer
 per kind (30) to one of two groups of 8-byte records, and the record is
