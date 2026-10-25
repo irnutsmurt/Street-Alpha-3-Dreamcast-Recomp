@@ -119,14 +119,20 @@ static void scripted_input(PadState *st) {
  *   press <button> [frames]   hold a port-A button (default 6 frames, then 10 released); "start+a": both
  *   press2 <button> [frames]  the same on port B (player 2)
  *   wait <frames>
+ *   untilnz <hex address> [frames [button]]          wait until the guest u16 there isn't 0
+ *   untileq <hex address> <value> [frames [button]]  wait until the guest byte there is value
+ *                             (both: at most frames, default 6000; tapping player 1's button meanwhile)
  *   shot                      write a screenshot (build/shot_<frame>.png)
+ *   mark <file>               create the file (the commands before it are done)
  *   shotp                     screenshot of the presented window image
  *   menu <toggle|up|down|left|right|accept|back>  drive the settings menu */
 int g_shot_request, g_shot_present_request;
-static char s_ctl_queue[64][256];
+#define CTL_QUEUE 512
+static char s_ctl_queue[CTL_QUEUE][256];
 static int s_ctl_head, s_ctl_tail, s_ctl_timer;
-static uint32_t s_ctl_until;  /* "untilnz": the address waited on */
+static uint32_t s_ctl_until;  /* "untilnz", "untileq": the address waited on */
 static int s_ctl_until_left;
+static int s_ctl_until_eq;  /* "untileq": the byte value waited for; -1: "untilnz" (the u16 not 0) */
 static uint32_t s_ctl_until_button;  /* pressed every 40 frames meanwhile (0: none) */
 static uint32_t s_ctl_hold;
 static int s_ctl_port;  /* 0 = player 1 ("press"), 1 = player 2 ("press2") */
@@ -166,12 +172,15 @@ static void control_file(PadState *st) {
     FILE *f = fopen(path, "r");
     if (f) {
         char line[256];
-        while (fgets(line, sizeof line, f))
-            if ((s_ctl_tail + 1) % 64 != s_ctl_head) {
-                line[strcspn(line, "\r\n")] = 0;
-                snprintf(s_ctl_queue[s_ctl_tail], sizeof s_ctl_queue[0], "%s", line);
-                s_ctl_tail = (s_ctl_tail + 1) % 64;
+        while (fgets(line, sizeof line, f)) {
+            line[strcspn(line, "\r\n")] = 0;
+            if ((s_ctl_tail + 1) % CTL_QUEUE == s_ctl_head) {
+                logf_("ctl: queue full, dropped \"%s\"", line);
+                continue;
             }
+            snprintf(s_ctl_queue[s_ctl_tail], sizeof s_ctl_queue[0], "%s", line);
+            s_ctl_tail = (s_ctl_tail + 1) % CTL_QUEUE;
+        }
         fclose(f);
         remove(path);
     }
@@ -181,9 +190,9 @@ static void control_file(PadState *st) {
         if (s_ctl_timer > 10) ctl_apply(&st[s_ctl_port], s_ctl_hold);
         return;
     }
-    if (s_ctl_until && s_ctl_until_left > 0) {  /* untilnz: hold the queue until the guest u16 isn't 0 */
+    if (s_ctl_until && s_ctl_until_left > 0) {  /* untilnz / untileq: hold the queue until the guest memory matches */
         s_ctl_until_left--;
-        if (!R16(s_ctl_until)) {
+        if (s_ctl_until_eq < 0 ? !R16(s_ctl_until) : R8(s_ctl_until) != (uint32_t)s_ctl_until_eq) {
             if (s_ctl_until_button && s_ctl_until_left % 40 < 8) ctl_apply(&st[0], s_ctl_until_button);
             return;
         }
@@ -195,7 +204,9 @@ static void control_file(PadState *st) {
     int n = 0;
     const char *line = s_ctl_queue[s_ctl_head];
     sscanf(line, "%31s %199s %d", cmd, arg, &n);
-    s_ctl_head = (s_ctl_head + 1) % 64;
+    { static int log = -1; if (log < 0) log = getenv("SFA3_CTL_LOG") != NULL;
+      if (log) logf_("ctl: %s (frame %llu)", line, (unsigned long long)g_vblank_count); }
+    s_ctl_head = (s_ctl_head + 1) % CTL_QUEUE;
     if (!strcmp(cmd, "press") || !strcmp(cmd, "press2") || !strcmp(cmd, "press3")) {
         s_ctl_hold = button_bit(arg);
         s_ctl_port = cmd[5] ? cmd[5] - '1' : 0;
@@ -212,7 +223,20 @@ static void control_file(PadState *st) {
         sscanf(line, "%*s %*s %*d %31s", button);
         s_ctl_until = (uint32_t)strtoul(arg, NULL, 16);
         s_ctl_until_left = n > 0 ? n : 6000;
+        s_ctl_until_eq = -1;
         s_ctl_until_button = button[0] ? button_bit(button) : 0;
+    } else if (!strcmp(cmd, "untileq")) {  /* untileq <hex address> <value> [frames [button]]: the same until the
+                                              * guest byte there is value (decimal, as poke's) (testing) */
+        char button[32] = "";
+        int v = 0, frames = 0;
+        sscanf(line, "%*s %*s %d %d %31s", &v, &frames, button);
+        s_ctl_until = (uint32_t)strtoul(arg, NULL, 16);
+        s_ctl_until_left = frames > 0 ? frames : 6000;
+        s_ctl_until_eq = v & 0xFF;
+        s_ctl_until_button = button[0] ? button_bit(button) : 0;
+    } else if (!strcmp(cmd, "mark")) {  /* mark <file>: create the file (a script waits for its commands so) */
+        FILE *mf = fopen(arg, "w");
+        if (mf) fclose(mf);
     } else if (!strcmp(cmd, "shot")) {
         g_shot_request = 1;
     } else if (!strcmp(cmd, "shotp")) {  /* presented image: includes scanlines and the menu */

@@ -16,20 +16,25 @@ Status (2026-10-25):
 
 - All four load as their own character numbers (`0x26`-`0x29`) and fight:
   intro, normals, specials and supers register for each
-  (build/test/char_test.sh). Voices are muted for now (`SFA3_PSP_MUTE`): the
-  PSP's sound numbers stall the Dreamcast's sound queue until the sound
-  banks are converted.
+  (build/test/char_test.sh), in every round (see Function map fixes).
 - Arcade mode: the select screen has the PSP's layout (Yun and Ingrid at the
   ends of the fifth row, Eagle and Maki in the last); picking one goes
   through the mode, -ism and speed screens, the world-map prologue (their
   own portrait, personal data and story: `OPnn.PAC`), the route (the PSP's,
-  `arcade.py`), the VS screen and into the fight.
-- Not yet: the VS screen's and the HUD's portraits and names (in progress),
-  win screens and quotes, endings, the ranking's portraits, the PSP-only
-  command checker Yun uses for command 0x20 (recompiled, but its
-  button-configuration state is PSP-only and starts zeroed), Ingrid's
-  background-scroll variables (PSP-only), the CPU playing them, versus mode's
-  select screen.
+  `arcade.py`), the VS screen (their portraits and names), the fight (the
+  HUD's face and name), the win screen (their portrait and quotes:
+  `WINnn.PAC`), the wipe and the next stage. Checked end to end with Yun
+  (two fights); Eagle through his first round.
+- Sound is the blocker: the PSP's sound numbers play against the Dreamcast
+  template's banks (Ryu's, in the character file). `SFA3_PSP_MUTE` skips the
+  PSP code's own sound calls (testing), but sounds an animation carries go
+  through the Dreamcast's code (`f_8C04C1EE`): Eagle's round-win pose asks
+  for one whose record has type 4, and the sound queue then waits forever
+  (Dreamcast: Sound queue). The fix is converting the sound banks.
+- Not yet: endings, the ranking's portraits, the PSP-only command checker Yun
+  uses for command 0x20 (recompiled, but its button-configuration state is
+  PSP-only and starts zeroed), Ingrid's background-scroll variables
+  (PSP-only), the CPU playing them, versus mode's select screen.
 
 ## The PSP program (`BOOT.BIN`)
 
@@ -526,6 +531,23 @@ counterpart. Confirmed by hand (`tools/psp/manual_maps.json`):
 | `0x1F338`, `0x1F3BC` | `8C025930`, `8C025998` | menu object spawn and free (PSP objects 0x94 bytes, DC 0x90; same fields below 0x90) |
 | `0x5DEDC`, `0x5E068` | `8C04C6D8`, `8C04C7F8` | fighter state change |
 | `0x5DF68` | `8C04C73C` | the same, with CPU branches (`0x77E00`=`8C059E8C`, `0x5FD4C`=`8C04D974`, `0x5F114`=`8C04D122`); the PSP also sets fighter +0xC0 (DC +0xB0) to 2 around it |
+| `0x67B1C` | `8C05082C` | from neutral: start walking or crouching (reads the pause flags `8C17FC6D`/`8C17FBE6` and the lever, calls the checks `0x67CB8`/`0x67E08`/`0x67D68` = `8C05090C`/`8C0509DC`/`8C050982`; returns 1 when it started one) |
+| `0x67E50` | `8C0509FE` | its neighbour (calls `8C04D246`, `8C051CFE`) |
+
+### Function map fixes
+
+The alignment (`align.py`) had paired `0x67B1C` with the animation stepper
+`8C04C29C` (no return value) and `0x67E50` with `8C05082C`. A stand loop
+(Yun's `0x1BBDF4`) calls `0x67B1C` and goes to walking when it returns 1:
+with the stepper in its place, a stand entered with the lever neutral ended
+its one-shot animation every frame and never walked. Round 1 hid it (the
+stand is entered with the lever held after the intro); from round 2 on the
+character didn't move. When a function's result is used, check that its
+counterpart returns one.
+
+Round reset: the Dreamcast's `f_8C0253F8` resets a fighter for a round; the
+PSP's (`0x1EAEC`) also clears the PSP-only word at +0x38, which here lives in
+the side storage (`psp.c`): `hle_fighter_reset` clears it after the original.
 
 Recompiled from the PSP: memcpy (`0x1EF430`), small wrappers (`0x670AC`
 Maki, `0x676A8`), `0x66890` (Ingrid: walks the fighters through the PSP's
@@ -571,7 +593,7 @@ like `0x6AB48` (the build runs it).
 | `SFA3_REPLACE=NAME=path;...` | serve a file's contents from a host file |
 | `SFA3_ADD=NAME=path;...` | add files to the disc |
 | `SFA3_FORCE_CHAR=player:hex` | write the character number every frame |
-| `SFA3_PSP_MUTE=1` | skip the PSP code's sound calls |
+| `SFA3_PSP_MUTE=1` | skip the PSP code's sound calls (not the animations' sounds) |
 | `SFA3_PSP_TRACE=addr` | trace one PSP function (`0`: all, from `SFA3_WATCH_FROM`) |
 | `SFA3_PSP_STUBS=frame` | log stub calls from that frame |
 | `SFA3_FILE_LOG=1` | log files opened by name, with the caller |
@@ -583,6 +605,16 @@ like `0x6AB48` (the build runs it).
 | `SFA3_SPRITE_LOG=frame` | log that frame's sprite draws: object, bank, part, record, position, animation, caller |
 | control `rtdump <file>` | the read trace (read-trace build only) |
 | control `poke <hex address> <decimal value>` | write a guest byte |
+| control `untilnz <hex address> [frames [button]]` | hold the queue until the guest u16 there isn't 0 (at most frames, default 6000), tapping player 1's button every 40 frames meanwhile |
+| control `untileq <hex address> <value> [frames [button]]` | the same until the guest byte is value (decimal); `untileq 8C17FBC6 3`: a round is on, `4`: it's over |
+| control `hold <1\|2> <buttons\|none>` | keep buttons held (`right+y`; `l`, `r` the triggers) |
+| control `dump <hex address> <bytes>` | log guest memory |
+| control `mark <file>` | create the file: the commands queued before it are done |
+| `SFA3_CTL_LOG=1` | log each control command with its frame (the queue holds 512) |
+| `SFA3_FORCE_HEALTH=<fighter>:<value>` | keep fighter 0/1's health at most value (1: a hit wins the round) |
+| `SFA3_POKE_EVERY=<hex address>:<value>,...` | write guest bytes every frame (up to 8) |
+| `SFA3_MMIO_BT=<hex address>` | the host call stack of the first access to that 16 MB area |
+| `SFA3_SPRITE_FIND=<hex part>` | the first 20 draws of that sprite part, any bank |
 
 ## Test scripts (`build/test`, not in the repository)
 
@@ -606,3 +638,20 @@ trace), `scan_tables.py` (Dreamcast tables the PSP extended), `tabinfo.py
 <addr> <size> [count] [PSP addr]` (a table on both machines),
 `pspxref.py <addr>` (PSP code building an address), `pdis.py <addr> [n]`
 (PSP disassembly).
+
+Arcade runs: `arc.sh <name> [select moves] [after]` (the add-on's arcade
+from the title in batches of control commands: select, the prologue, a fight
+won by KOs, then after's commands; env `B3`, `FIGHT`, `R1`/`R2`, `ONE_KO`,
+`KO_OFF`, `AFTER_S`; a montage of the shots in the scratchpad, the shots then
+deleted), `arc_full.sh <name> <moves>` (one character all the way to the next
+stage with shots throughout: the fight follows the round state with
+`untileq`, the script waits on `mark`). Select moves from the cursor's start
+(Ryu, row 3 column 0): Yun `down down`, Ingrid `right` x6 `down down`, Eagle
+`right right down down down`, Maki `right` x4 `down down down`.
+`vswin.sh <hex char> <name>` (Versus, two KOs, the win screen),
+`cpu_vs.sh <opponent> <seconds> <name>` (arcade as Ryu against a poked first
+opponent: the CPU playing a character). `hangbt.sh [out]` waits until the
+test game stops rendering for 6 seconds and writes gdb's backtraces (the
+recompiled functions by name); gdb can also stop on a guest condition, e.g.
+`break f_8C01421E if (*(unsigned*)((char*)&g + 16) & 0xF00) == 0x400`
+(`g.r[n]` is at `&g + 4n`, `g.pr` at `&g + 148`).

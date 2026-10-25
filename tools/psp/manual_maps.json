@@ -23,7 +23,9 @@
   "0x5df68": "0x8c04c73c",
   "0x77e00": "0x8c059e8c",
   "0x5fd4c": "0x8c04d974",
-  "0x5f114": "0x8c04d122"
+  "0x5f114": "0x8c04d122",
+  "0x67b1c": "0x8c05082c",
+  "0x67e50": "0x8c0509fe"
  },
- "_functions_about": "checked by hand: 1D044 object physics step (pos += vel, vel += accel); 1F338/1F3BC menu object spawn/free (PSP objects 0x94 bytes, DC 0x90, same fields below 0x90); 5DEDC/5E068/5DF68 fighter state changes (5DF68 also sets PSP +0xC0 = 2 around its body); 77E00 CPU, 5FD4C, 5F114 their callees"
+ "_functions_about": "checked by hand: 1D044 object physics step (pos += vel, vel += accel); 1F338/1F3BC menu object spawn/free (PSP objects 0x94 bytes, DC 0x90, same fields below 0x90); 5DEDC/5E068/5DF68 fighter state changes (5DF68 also sets PSP +0xC0 = 2 around its body); 77E00 CPU, 5FD4C, 5F114 their callees; 67B1C neutral -> walk/crouch start (reads the two pause flags, the lever, calls the walk/crouch checks 67CB8/67E08/67D68 = 8C05090C/8C0509DC/8C050982, sets +0xC0..C2, returns 1 when it started one): align.py had it as the animation stepper 8C04C29C, which kept a PSP character's neutral stand from ever starting to walk; 67E50 its neighbour = 8C0509FE (align.py had 8C05082C)"
 }

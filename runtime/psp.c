@@ -94,6 +94,18 @@ static uint32_t in_array(unsigned arr, int64_t i, int64_t k) {
     return A->dc + (uint32_t)i * A->dc_size + (uint32_t)o;
 }
 
+/* f_8C0253F8 resets a fighter for a round; the PSP's (0x1EAEC) also clears
+ * the PSP-only word at +0x38, which here is in the side storage: cleared too */
+void f_8C0253F8_orig(void);
+void hle_fighter_reset(void) {
+    uint32_t f = g.r[4];
+    f_8C0253F8_orig();
+    const Array *A = &s_arrays[0];
+    if (f - A->dc < A->count * A->dc_size && (f - A->dc) % A->dc_size == 0) {
+        psp_ext_store(ext_addr(0, (f - A->dc) / A->dc_size, 0x38), 0, 4);
+    }
+}
+
 uint32_t psp_add_slow(uint32_t p, int32_t d) {
     for (unsigned arr = 0; arr < ARRAYS; arr++) {
         const Array *A = &s_arrays[arr];
