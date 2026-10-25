@@ -204,7 +204,10 @@ static void dump_state(const char *why) {
 uint32_t g_watch_ram = 0xFFFFFFFFu, g_watch_len = 1;  /* SFA3_WATCH_WRITE=addr[,bytes] */
 void watch_hit(uint32_t a, uint32_t v, int size) {
     static int n;
-    if (n++ > 200) return;
+    static long long from = -1;  /* SFA3_WATCH_FROM=<frame>: ignore writes before it */
+    if (from < 0) from = getenv("SFA3_WATCH_FROM") ? atoll(getenv("SFA3_WATCH_FROM")) : 0;
+    if ((long long)g_vblank_count < from) return;
+    if (n++ > 400) return;
     void *frames[16];
     int k = backtrace(frames, 16);
     char **names = backtrace_symbols(frames, k);

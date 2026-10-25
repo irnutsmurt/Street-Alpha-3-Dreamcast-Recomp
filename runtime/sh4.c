@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "cpu.h"
+#include "psp.h"
 #include "dispatch.h"
 #include "runtime.h"
 
@@ -185,6 +186,7 @@ void call_indirect(uint32_t addr, uint32_t from) {
             if (f) { f(); return; }
         }
     }
+    if (psp_stub_call(addr)) return;  /* a PSP character's function (psp.c) */
     if (is_ram(addr)) {
         uint32_t p1 = (addr & 0x1FFFFFFF) | 0x80000000u;
         if (p1 >= 0x8C010000u && p1 < 0x8C010000u + g_main_image_size) {
