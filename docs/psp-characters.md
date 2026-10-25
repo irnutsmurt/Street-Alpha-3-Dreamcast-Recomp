@@ -12,19 +12,17 @@ The Dreamcast side of everything here is in [dreamcast.md](dreamcast.md).
 PSP addresses are the program's own (`BOOT.BIN` loads at 0); Dreamcast ones
 are `8C......`.
 
-Status (2026-10-24):
+Status (2026-10-25):
 
-- PSP Ryu runs on recompiled PSP code in Ryu's place, all specials and
-  supers.
-- Eagle plays in Ryu's place: intro, walking, normals, specials and supers.
-  His voices are muted for now (`SFA3_PSP_MUTE`): the PSP's sound numbers
-  stall the Dreamcast's sound queue until the sound banks are converted.
-- Maki, Yun and Ingrid build; Yun's code still has PSP addresses with no
-  Dreamcast counterpart (see Gaps).
-- Characters `0x26`-`0x29` as new numbers: Eagle loads and fights as
-  `0x26` (forced with `SFA3_FORCE_CHAR`, files added with `SFA3_ADD`). The
-  HUD shows Ryu's name and portrait: the tables indexed by character number
-  have no entries for the new numbers yet.
+- All four load as their own character numbers (`0x26`-`0x29`, forced with
+  `SFA3_FORCE_CHAR`, files added with `SFA3_ADD`) and fight: intro, normals,
+  specials and supers register for each (build/test/char_test.sh).
+  Voices are muted for now (`SFA3_PSP_MUTE`): the PSP's sound numbers stall
+  the Dreamcast's sound queue until the sound banks are converted.
+- Not yet: picking them on the select screen; their name, portrait and win
+  screens (the HUD shows Ryu's); sound; the PSP-only command checker Yun uses
+  for command 0x20 (recompiled, but its button-configuration state is
+  PSP-only and starts zeroed); Ingrid's background-scroll variables (PSP-only).
 
 ## The PSP program (`BOOT.BIN`)
 
@@ -275,36 +273,128 @@ there on a real Dreamcast), served by `mmio.c` from `g_ext_ram`. Used for:
   data from LBA `0x800000` up. Everything that says where the root is gets
   patched as it's read: the volume descriptor, both path tables (the game's
   file system finds the root through them; missing this gave DISC LOAD
-  ERROR) and the subdirectories' `..` records. `SFA3_REPLACE=NAME=path;...` swaps an existing file's
-  contents.
-- Still to do: the 42 tables the Dreamcast indexes by character number
-  (`tools/psp/dc_idtables.py`, list below) need entries for `0x26`-`0x29`; the
-  recompiler can move a table (`relocate.json`: literal pool addresses
-  rewritten) to make room.
+  ERROR) and the subdirectories' `..` records.
+- Tables indexed by character number: moved, see Character tables.
 
-Dreamcast tables indexed by character number:
+### Character tables
 
-```
-8C09B116 8C0A7018 8C0A7176 8C0A719E 8C0A8248 8C0A8380 8C0A83A8 8C0A83D0
-8C0A83F8 8C0A879A 8C0AB820 8C0B2088 8C0B2254 8C0B57B8 8C0B57DE 8C0B7C08
-8C0B7CC0 8C0B7D58 8C0B8DA8 8C0B8DCE 8C0B8DF4 8C0B8E1A 8C0B8F74 8C0B9A74
-8C0BA66C 8C0BBD44 8C0BC0BC 8C0BC5D8 8C0BD570 8C0BE266 8C0C0E54 8C0C111C
-8C0C1350 8C0C142C 8C0C1478 8C0C15A0 8C0C1AC8 8C0C1B14 8C0D2354 8C0D5064
-8C0D5498 8C1D1608
-```
+The Dreamcast's tables indexed by character number have 38 entries (some
+40), packed one after another. `tools/psp/chartables.py` lists them; the
+recompiler moves every listed table (literals pointing into it rewritten) to
+the extension RAM with room for 42 entries, and writes the list
+(`char_tables.c`). At boot and reset `runtime/chartables.c` copies the
+Dreamcast's entries and fills the new ones with copies of entry 0 (Ryu's);
+with the add-on built, `build_char.py` adds the PSP's entries
+(`g_psp_char_data` in `psp_tables.c`), checked against the Dreamcast's.
+The PSP code's own references to these tables go to the moved copies, which
+have the PSP's 42-entry layout.
 
-The PSP's (64 candidates, `build/test/idtables.py`) include `0x2173F8`,
-`0x2174A0`, `0x2174F4`, `0x2178C8`; Yun's data points into
-`0x215898`-`0x2179D0` (read by `0x642AC`, `0x64368`).
+| Dreamcast | Entry | PSP | What (where read) |
+|---|---|---|---|
+| `8C0B2088` | 4 | `0x2154E0` | `f_8C04BF86` |
+| `8C0B21BC` | 4 | `0x215632` | one byte per -ism -> fighter +0x231 (`f_8C04EB60`, literal +1) |
+| `8C0B2254` | 4 | `0x2156DA` | `f_8C04EB76` |
+| `8C0B57B8`, `8C0B57DE` | 1 | `0x219B88`, `0x219BB2` | `f_8C0546D6` |
+| `8C0B7C08`, `8C0B7CC0` | ptr | `0x21C02C`, `0x21C0F4` | `f_8C05090C`, `f_8C050982` (records the Dreamcast has) |
+| `8C0B7D58` | 1 | `0x21C19C` | `f_8C04E900` |
+| `8C0B7D7E`, `7E16`, `7EAE` | 4 | `0x21C1C6`, `0x21C26E`, `0x21C316` | -ism 0, >0, <0: fighter +0x2A0 points at one (`f_8C04E900`) |
+| `8C0B7F46`, `8406`, `88C6` | 32 | `0x21C3BE`, `0x21C8FE`, `0x21CE3E` | -ism 0, >0, <0: fighter +0x2A4 |
+| `8C0B8DA8`, `8DCE`, `8DF4`, `8E1A` | 1 | `0x21D3A0`... | `f_8C04E900`, `f_8C049A86`, `f_8C049D28` (one is the guard meter: wrong, it showed DANGER) |
+| `8C0B9A74` | 1 | `0x21E0D0` | `f_8C056B4C` |
+| `8C0BA66C` | 1 | `0x21ED30` | `f_8C05A010` (sound) |
+| `8C0BBD44` | 2 | `0x220408` | `f_8C05B05E`; 37 entries (the 38th is the next object, on the PSP too) |
+| `8C0BC0BC` | 4 | `0x220798` | `f_8C05C01C` |
+| `8C0BC5D8` | 2 | `0x220C80` | `f_8C05D732`; 40 entries |
+| `8C0C0E54` | 1 | `0x2260EC` | `f_8C06AA2C`: a character number |
+| `8C0C15A0` | 1 | `0x226BC8` | `f_8C06D1C8` |
+| `8C0C1B14` | 2 | `0x2270B0` | `f_8C06DC3C` |
+| `8C0D5498` | 1 | `0x239348` | `f_8C0904D6` |
+| `8C09B08E` | 2 | - | win screen file (names[] index; `f_8C01C2A6`) |
+| `8C09B0DE` | 1 | - | win screen, a byte per character |
+| `8C09B116` | 2 | - | bd file (`f_8C01CA18`) |
+| `8C0B39C8` | ptr | `0x2178C8` | command definitions (not by character): the PSP adds 0x40 and 0x41 |
+
+Found three ways: following the character number through the code
+(`tools/psp/dc_idtables.py`); a read-trace build comparing two fights
+(`tools/read_trace.py`: an instruction that reads `a` with one character and
+`a + k x s` with another reads a table of `s`-byte entries); and code reading
+(the per-ism tables are reached through fighter +0x2A0/+0x2A4). Still to do:
+the select screen's, stage choice's (`8C0A7018`, `8C0A7176`, `8C0A719E`,
+`8C0A8248`, ...), the HUD's (`8C0C0D26` and `8C0AB820`: sprite numbers),
+`8C0B8F74` (intro pairings: lists of (character, value) ending `FFFF`;
+values index `8C0B2154`/`8C0B2162`, which the PSP extended too),
+`8C0BD570` (17-byte records), `8C0BE266`, `8C0C111C`, `8C0C142C`,
+`8C0C1478`, `8C0C1AC8`, `8C0D2354`, `8C0D5064`, `8C1D1608` (RAM).
+
+Not moved: `8C09B20C` (usage counters per character and -ism, 8 bytes each)
+is part of the system data saved to the memory card; the new characters
+can't have counters there.
+
+### Files per character
+
+The file name table (`8C09895C`, 271 names) has families by character:
+`pl` (archive, index 13 + character), `rk`, `op` (`f_8C01B904`: 126 +
+position), `win` (table `8C09B08E`), `bd` (table `8C09B116`), `end`. The PSP
+has all of them for the new characters (`bd26_u.pac`, `end26_u.pac`,
+`op26_u.pac`, `rk26.pac`, `win26_u.pac`, and `pl29r_u.pac`). A `bd` file:
+win portrait sprites (sections `0x100001A`, `0x200001A`) and a texture
+(`0x10000900`); the PSP's adds the win quotes (`0x10001`, text).
+
+### Extension RAM
+
+| Address | What |
+|---|---|
+| `98000000` + slot x `0x400000` | sprite tile sections too big for a player slot (`psp_load.c`) |
+| `98D00000` | the moved character tables (`chartables.py`) |
+| `98E00000` | records the PSP's new table entries point at |
+| `98E80000` | PSP-only variables the recompiled code uses (`build_char.py`) |
+| `98F00000` | the new characters' archive names (`psp_load.c`) |
+
+### Engine functions only the new characters call
+
+`build_char.py` recompiles PSP engine functions with no known Dreamcast
+counterpart. Confirmed by hand (`tools/psp/manual_maps.json`):
+
+| PSP | Dreamcast | What |
+|---|---|---|
+| `0x1D044` | `8C024568` | object physics step (position += velocity, velocity += acceleration) |
+| `0x1F338`, `0x1F3BC` | `8C025930`, `8C025998` | menu object spawn and free (PSP objects 0x94 bytes, DC 0x90; same fields below 0x90) |
+| `0x5DEDC`, `0x5E068` | `8C04C6D8`, `8C04C7F8` | fighter state change |
+| `0x5DF68` | `8C04C73C` | the same, with CPU branches (`0x77E00`=`8C059E8C`, `0x5FD4C`=`8C04D974`, `0x5F114`=`8C04D122`); the PSP also sets fighter +0xC0 (DC +0xB0) to 2 around it |
+
+Recompiled from the PSP: memcpy (`0x1EF430`), small wrappers (`0x670AC`
+Maki, `0x676A8`), `0x66890` (Ingrid: walks the fighters through the PSP's
+fighter pointer table `0x213F88`), `0x1DC324` (an event/demo system Ingrid's
+extra code calls), and the PSP-only command checker `0x64220` (Yun, command
+0x20) with its two handlers (`0x642AC`, `0x64368`, table `0x217D30`) and its
+button-configuration helpers (`0x634D4`-`0x63C30`).
+
+Game state: PSP `0x39C9E0` has the Dreamcast's `8C17FBC0` layout below +0xA0
+(the alignment votes agree; +0x72 is the game mode on both). Above that the
+Dreamcast keeps another block (PSP `0x8082F8`).
+
+### Building: what gets copied
+
+A PSP data object the recompiled code needs and the Dreamcast doesn't have is
+copied into the character files whole: from its address up to the next
+address the PSP program refers to (relocations list them all). Pointers in
+it are followed two levels; code pointers in it are recompiled when they're a
+character's code or, in a table the code reads directly, engine code with no
+counterpart. Switch tables are left out (the recompiled code has them built
+in). PSP-only variables (in `.bss`) get zeroed room in the extension RAM.
+
+Ingrid's code ends at `0x1CB124` and her data at `0x2B2310`: a PSP-only
+module follows each (its dispatcher `0x1CB124` reads the table at
+`0x2B2310`). Yun's own descriptor builder `0x1BF93C` is a no-op at run time
+like `0x6AB48` (the build runs it).
 
 ## Gaps
 
-- Yun: PSP `0x39CC70` has no Dreamcast counterpart found yet; his engine
-  table and function pointers need theirs.
 - Sound: PPHD/VAG -> SOSB/SMPB, then drop `SFA3_PSP_MUTE`.
 - Select screen (the PSP's layout and portraits), names, portraits and VS
   screens (the `0x10000E00` textures), win quotes, endings (`end26`-`end29`),
   CPU behaviour, stages and music.
+- The rest of the character tables (Character tables, above).
 
 ## Debugging switches (environment)
 
@@ -321,11 +411,15 @@ The PSP's (64 candidates, `build/test/idtables.py`) include `0x2173F8`,
 | `SFA3_WATCH_WRITE=addr,len` | log writes to guest memory (with the writing function) |
 | `SFA3_WATCH_FROM=frame` | start watching or tracing at that frame |
 | `SFA3_DMA_LOG=1` | log DMA |
+| control `rtdump <file>` | the read trace (read-trace build only) |
 
 ## Test scripts (`build/test`, not in the repository)
 
-`run.sh` (instance 7), `id_fight.sh <id>` (character `<id>` forced for
-player 1, files added with `SFA3_ADD`, Versus against M.Bison),
+`run.sh` (instance 7; `BIN=` another binary), `id_fight.sh <id>` (character
+`<id>` forced for player 1, files added with `SFA3_ADD`, Versus against
+M.Bison), `char_test.sh <id> <name>` (every motion with punch and kick, a
+screenshot and the fighter's state +4..+7 after each), `trace_run.sh <id>
+<out>` (a fight with the read-trace build, then the trace),
 `eagle_fight.sh`, `motion.sh` (inputs: qcf, qcb, dp, rdp, hcf, hcb, qcf2,
 qcb2, mash), `movestrip.sh`, `shots.sh`, `alive.sh`, `mkpac.py`
 (a PSP archive in the Dreamcast's form), `idtables.py`, `desccmp.py`,

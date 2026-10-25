@@ -15,6 +15,7 @@ A character file holds, from its start:
          into Dreamcast ones) and its animation data (the PSP keeps it in
          the PAC's section 0x11, the Dreamcast in this file).
 """
+import bisect
 import json
 import os
 import struct
@@ -33,6 +34,11 @@ DESC_WORDS = 39
 CODE_WORDS = range(16, 28)
 HELPER_LIB = (0xCE000, 0xD1000)      # code only the PSP-only characters use
 BUILDER = 0x6AB48                    # builds descriptor words 0-11 / 32-34 at load: done here instead
+BUILDERS = {BUILDER, 0x1BF93C}       # and Yun's own builder: no-ops at run time (run_entry did their work)
+LAST_CODE_END = 0x1CB124             # Ingrid's code ends here (a PSP-only module follows)
+LAST_DATA_END = 0x2B2310             # and her data (the module's tables follow)
+BSS, BSS_END = 0x2D4FC0, 0x2D4FC0 + 0xA4D454
+EXT_PSP_VARS, EXT_PSP_VARS_END = 0x98E80000, 0x98F00000  # PSP-only variables (extension RAM, zeroed at boot)
 PSP_FIGHTERS, PSP_FIGHTERS_END = 0x80AF70, 0x80AF70 + 4 * 0x498
 PSP_POOLS, PSP_POOLS_END = 0xA39840, 0xA3E7C0
 PSP_SHOTS = 0xA37080                  # projectiles, then the effect pools
@@ -81,6 +87,8 @@ class Character:
             other = Character.__new__(Character)
             other.boot, other.cid, (other.desc, other.dw), other.code = boot, n, descs[n], code_ranges[n]
             hi = min(hi, other.reach()[0])
+        else:
+            hi = min(hi, LAST_DATA_END)
         self.own = (lo, hi)
 
     def reach(self):
@@ -173,7 +181,9 @@ class Build:
         self.fmap.update({int(k, 16): int(v, 16) for k, v in manual["functions"].items()})
         # the character tables: the moved copies have the PSP's 42-entry layout
         for t in chartables.layout():
-            lo, hi = t.psp, t.psp + chartables.CHARS * t.size
+            if t.psp is None:
+                continue
+            lo, hi = t.psp, t.psp + t.entries * t.size
             self.gsegs = [s for s in self.gsegs if s[1] <= lo or s[0] >= hi] + [(lo, hi, t.ext)]
         self.gsegs.sort()
         self.descs = descriptors(self.boot)
@@ -182,8 +192,11 @@ class Build:
         srt = sorted(starts.items(), key=lambda x: x[1])
         self.code_ranges = {}
         for k, (c, s) in enumerate(srt):
-            self.code_ranges[c] = (s, srt[k + 1][1] if k + 1 < len(srt) else 0x1C8000)
+            self.code_ranges[c] = (s, srt[k + 1][1] if k + 1 < len(srt) else LAST_CODE_END)
         self.chars = []
+        self._refs = None
+        self.copies = []      # PSP data with no Dreamcast counterpart, copied into the character files
+        self.vars_next = EXT_PSP_VARS
         self.funcs = {}       # PSP address -> Function
         self.order = []
         self.taken = []       # functions given stubs, in stub order
@@ -193,7 +206,7 @@ class Build:
         return any(lo <= a < hi for lo, hi in (c.code for c in self.chars)) or HELPER_LIB[0] <= a < HELPER_LIB[1]
 
     def resolve(self, t):
-        if t == BUILDER:
+        if t in BUILDERS:
             return ("nop",)
         if t in self.funcs:
             return ("psp", f"p_{t:06X}")
@@ -206,17 +219,78 @@ class Build:
         self.chars.append(c)
         return c
 
+    def all_refs(self):
+        """every data address the PSP program refers to: built in its code (HI16/LO16) or kept in its data"""
+        if self._refs is None:
+            refs, his = set(), {}
+            for a in sorted(self.boot.text_rel):
+                rel = self.boot.text_rel[a]
+                if rel == R_MIPS_HI16:
+                    i = self.boot.insn(a)
+                    his[i.rt] = i.imm << 16
+                elif rel == R_MIPS_LO16:
+                    i = self.boot.insn(a)
+                    if i.rs in his:
+                        refs.add((his[i.rs] + i.imm) & 0xFFFFFFFF)
+            refs |= {self.boot.u32(p) for p in self.boot.data_ptrs}
+            self._refs = sorted(r for r in refs if DATA <= r < BSS_END)
+        return self._refs
+
+    def extent(self, a):
+        """a data object: from a up to the next address the program refers to"""
+        refs = self.all_refs()
+        i = bisect.bisect_right(refs, a)
+        return min(refs[i] if i < len(refs) else a + 16, a + 0x8000)
+
     def collect(self):
-        """the functions to recompile: the characters' code and whatever it reaches with no Dreamcast counterpart"""
-        todo = []
+        """the functions to recompile (the characters' code and whatever it reaches with no Dreamcast
+        counterpart) and the PSP data they need with none: copied whole, the pointers in it followed"""
+        todo, data = [], []  # data: (address, how many pointers away from the code)
         for c in self.chars:
             todo += [c.dw[k] for k in CODE_WORDS if c.dw[k]] + [c.entry] + sorted(c.function_pointers())
             todo += [a for a in c.code_refs() if 0x1000 <= a < TEXT_END]
+            lo, hi = c.own
+            data += [(self.boot.u32(a), 0) for a in range(lo, hi, 4) if a in self.boot.data_ptrs]
         taken = set(todo)
         engine_recompiled = set()
-        while todo:
+        seen = set()
+        self.psp_vars = []
+        while todo or data:
+            if not todo:
+                a, depth = data.pop()
+                if a in seen or self.global_dc(a) is not None or self.in_own(a) or not DATA <= a < BSS_END:
+                    continue
+                if PSP_FIGHTERS <= a < PSP_FIGHTERS_END or PSP_SHOTS <= a < PSP_POOLS_END:
+                    continue  # the object arrays: translated as the code runs (psp.c)
+                seen.add(a)
+                hi = self.extent(a)
+                if a >= BSS:  # a variable the Dreamcast doesn't have: room in the extension RAM
+                    size = (hi - a + 3) & ~3
+                    self.gsegs.append((a, hi, self.vars_next))
+                    self.gsegs.sort()
+                    self.psp_vars.append((a, hi, self.vars_next))
+                    self.vars_next += size
+                    if self.vars_next > EXT_PSP_VARS_END:
+                        raise SystemExit("PSP-only variables outgrew their room: " +
+                                         " ".join(f"{lo:06X}+{h - lo:X}" for lo, h, _ in self.psp_vars))
+                    continue
+                self.copies.append((a, hi))
+                if depth >= 2:  # far from the code: its pointers aren't followed (they're reported if unresolved)
+                    continue
+                for p in range(a & ~3, hi, 4):
+                    if p in self.boot.data_ptrs:
+                        v = self.boot.u32(p)
+                        if 0x1000 <= v < TEXT_END:
+                            # a character's code; or engine code with no counterpart in a table the
+                            # recompiled code reads directly (a handler table); else its counterpart
+                            if self.is_char_code(v) or (depth == 0 and v not in self.fmap):
+                                todo.append(v)
+                                taken.add(v)
+                        else:
+                            data.append((v, depth + 1))
+                continue
             a = todo.pop()
-            if a in self.funcs or a == BUILDER:
+            if a in self.funcs or a in BUILDERS:
                 continue
             if not self.is_char_code(a) and a in self.fmap:
                 continue
@@ -224,6 +298,7 @@ class Build:
                 engine_recompiled.add(a)
             f = Function(self.boot, a)
             self.funcs[a] = f
+            switch_tables = {jt[1] for jt in f.tables.values()}  # the recompiled code has these built in
             his = {}
             for x in f.addrs:
                 i = self.boot.insn(x)
@@ -234,9 +309,12 @@ class Build:
                     his[i.rt] = i.imm << 16
                 elif rel == R_MIPS_LO16 and i.rs in his:
                     v = (his[i.rs] + i.imm) & 0xFFFFFFFF
-                    if 0x1000 <= v < TEXT_END and v not in f.addrs:
-                        todo.append(v)
-                        taken.add(v)
+                    if 0x1000 <= v < TEXT_END:
+                        if v not in f.addrs:
+                            todo.append(v)
+                            taken.add(v)
+                    elif v not in switch_tables:
+                        data.append((v, 0))
         self.order = sorted(self.funcs)
         self.taken = sorted(a for a in taken if a in self.funcs)
         self.engine_recompiled = sorted(engine_recompiled)
@@ -253,24 +331,8 @@ class Build:
         self.stub_off = {a: 8 + 8 * k for k, a in enumerate(self.taken)}
         self.shared_off = {}
         off = 8 + 8 * len(self.taken)
-        # data the characters' code reaches outside their own data and with no Dreamcast counterpart
-        shared = set()
-        for c in self.chars:
-            for f in (self.funcs[a] for a in self.order):
-                pass
-        refs = set(self.data_refs())
-        for c in self.chars:  # pointers in the characters' own data, too
-            lo, hi = c.own
-            refs |= {self.boot.u32(a) for a in range(lo, hi, 4) if a in self.boot.data_ptrs}
-        for a in sorted(refs):
-            if self.global_dc(a) is None and not self.in_own(a) and DATA <= a < DATA_END:
-                shared.add(a & ~0xF)
-        ranges = []
-        for a in sorted(shared):
-            if ranges and a <= ranges[-1][1] + 0x10:
-                ranges[-1][1] = max(ranges[-1][1], a + 0x10)
-            else:
-                ranges.append([a, a + 0x10])
+        # the PSP data copied (collect()), on 4-byte boundaries
+        ranges = [[lo & ~3, (hi + 3) & ~3] for lo, hi in self.copies]
         # the shared palettes are copied whole
         ranges = [[min(lo, PALETTES[0]) if PALETTES[0] <= lo < PALETTES[1] else lo,
                    max(hi, PALETTES[1]) if PALETTES[0] <= lo < PALETTES[1] else hi] for lo, hi in ranges]
@@ -588,6 +650,8 @@ def main():
     b.collect()
     b.layout()
     print(f"functions to recompile: {len(b.funcs)} (stubs {len(b.taken)})")
+    print("PSP-only variables (extension RAM):", " ".join(f"{lo:06X}+{hi - lo:X}" for lo, hi, _ in b.psp_vars))
+    print("PSP data copied:", " ".join(f"{lo:06X}+{hi - lo:X}" for lo, hi in sorted(b.copies)))
     print("engine functions recompiled from the PSP:", " ".join(f"{a:06X}" for a in b.engine_recompiled))
     os.makedirs(out_dir, exist_ok=True)
     for (cid, fid), c in zip(pairs, b.chars):

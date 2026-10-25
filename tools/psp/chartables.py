@@ -44,13 +44,16 @@ MAIN = 0x8C010000
 
 
 class T:
-    def __init__(self, dc, size, psp, kind="copy", count=38, note=""):
+    """a table: the Dreamcast's at dc (count entries of size bytes), the PSP's at
+    psp; moved with room for `entries` entries, the PSP's entries `new` added"""
+    def __init__(self, dc, size, psp, kind="copy", count=38, note="", entries=CHARS, new=NEW):
         self.dc, self.size, self.psp, self.kind, self.count, self.note = dc, size, psp, kind, count, note
+        self.entries, self.new = entries, new
         self.ext = None
-        # entries copied from the Dreamcast: at least 38, so a table one short
-        # (the next object's first bytes read as the last character's) keeps
-        # reading what the Dreamcast did
-        self.copy_count = max(count, 38)
+        # entries copied from the Dreamcast: at least 38 for a character table,
+        # so one a short (the next object's first bytes read as the last
+        # character's) keeps reading what the Dreamcast did
+        self.copy_count = max(count, 38) if entries == CHARS else count
 
     @property
     def end(self):
@@ -86,14 +89,21 @@ TABLES = [
     T(0x8C0C15A0, 1, 0x226BC8, note="f_8C06D1C8"),
     T(0x8C0C1B14, 2, 0x2270B0, note="f_8C06DC3C"),
     T(0x8C0D5498, 1, 0x239348, note="f_8C0904D6"),
+    # --- files: names[] indices (the file name table 0x8C09895C); the add-on's files get their own ---
+    T(0x8C09B08E, 2, None, count=40, note="win screen file (f_8C01C2A6); 0x24/0x25 are win24/win25"),
+    T(0x8C09B0DE, 1, None, count=40, note="win screen: a byte per character (f_8C01C2A6)"),
+    T(0x8C09B116, 2, None, count=40, note="bd file (f_8C01CA18): win portrait sprites"),
+    # --- not by character: the PSP's additions the new characters use ---
+    T(0x8C0B39C8, 4, 0x2178C8, "cmd", count=64, entries=66, new=range(64, 66),
+      note="command definitions (f_8C04EBDC): 0x40 QCB x2 ending back + K, 0x41 QCF x2 ending forward + K"),
 ]
 
 
 def layout():
-    a, d = EXT, []
+    a = EXT
     for t in TABLES:
         t.ext = a
-        a += (t.size * CHARS + 3) & ~3
+        a += (t.size * t.entries + 3) & ~3
     assert a <= EXT_DATA, "the moved tables outgrew their room"
     return TABLES
 
@@ -123,14 +133,30 @@ class Programs:
         return struct.unpack_from("<I", self.psp, a + PSP_OFF)[0]
 
 
+def cmd_record(read, a):
+    """a command definition: u16 directions, the last with 0x400 set, then the buttons"""
+    out = bytearray()
+    while len(out) < 64:
+        h = read(a, 2)
+        out += h
+        a += 2
+        if int.from_bytes(h, "little") & 0x400:
+            return bytes(out + read(a, 2))
+    raise ValueError(f"command definition at {a:X}: no end")
+
+
 def agreement(pr, t):
-    """how many of the Dreamcast's 38 entries the PSP table has the same"""
+    """how many of the Dreamcast's entries (38 at most) the PSP table has the same"""
+    n = min(t.count, 38)
     if t.kind == "copy":
-        return sum(pr.d(t.dc + t.size * k, t.size) == pr.p(t.psp + t.size * k, t.size) for k in range(38))
+        return sum(pr.d(t.dc + t.size * k, t.size) == pr.p(t.psp + t.size * k, t.size) for k in range(n))
+    if t.kind == "cmd":  # the records the same
+        return sum(cmd_record(pr.d, pr.du32(t.dc + 4 * k)) == cmd_record(pr.p, pr.pu32(t.psp + 4 * k))
+                   for k in range(n))
     # pointers: the same pattern of shared records
-    d = [pr.du32(t.dc + 4 * k) for k in range(38)]
-    p = [pr.pu32(t.psp + 4 * k) for k in range(38)]
-    return sum(all((d[i] == d[j]) == (p[i] == p[j]) for j in range(38)) for i in range(38))
+    d = [pr.du32(t.dc + 4 * k) for k in range(n)]
+    p = [pr.pu32(t.psp + 4 * k) for k in range(n)]
+    return sum(all((d[i] == d[j]) == (p[i] == p[j]) for j in range(n)) for i in range(n))
 
 
 def patches(pr):
@@ -140,13 +166,18 @@ def patches(pr):
     for t in TABLES:
         if t.psp is None:
             continue
-        ok = agreement(pr, t)
-        if ok < 30:
-            raise ValueError(f"table {t.dc:08X}: the PSP's at {t.psp:06X} matches only {ok}/38 entries")
-        for c in NEW:
+        ok, n = agreement(pr, t), min(t.count, 38)
+        if ok < n * 4 // 5:
+            raise ValueError(f"table {t.dc:08X}: the PSP's at {t.psp:06X} matches only {ok}/{n} entries")
+        for c in t.new:
             src = t.psp + t.size * c
             if t.kind == "copy":
                 v = pr.p(src, t.size)
+            elif t.kind == "cmd":
+                rec = cmd_record(pr.p, pr.pu32(src))
+                out.append((data, rec))
+                v = struct.pack("<I", data)
+                data = (data + len(rec) + 3) & ~3
             elif t.kind in ("ptr", "ptr_list"):
                 target = pr.pu32(src)
                 pairs = {pr.pu32(t.psp + 4 * k): pr.du32(t.dc + 4 * k) for k in range(38)}
