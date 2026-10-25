@@ -172,29 +172,48 @@ void hle_vs_palette(void) {
     f_8C069D34_orig();
 }
 
-/* --- the select screen's face layout: the PSP characters' extra cells ---
+/* --- the select screens' face layouts: the PSP characters' extra cells ---
  * f_8C018084 draws an object's layout: a list of (x, y, part) records from
- * obj+0x8C + pose x 6 (the pose from the object's animation). Objects share
- * the base (0x8C0BF610) and pick lists by pose; the faces' list is pose 0,
- * the cells' frames' list pose 43. The PSP characters' cells that aren't in
- * those lists are drawn from extra lists: after the object's own, its base
- * pointed so its pose finds the extra list. */
-#define LAYOUT_BASE 0x8C0BF610u
-extern const uint32_t g_psp_layout_extras[][2];
+ * obj+0x8C + pose x 6 (the pose from the object's animation). Objects share a
+ * base and pick lists by pose: arcade's 0x8C0BF610 (faces pose 0, frames 43),
+ * versus' 0x8C0C0714 (faces 0, frames 41). The PSP characters' cells that
+ * aren't in those lists are drawn from extra lists (base, pose, list): after
+ * the object's own, its base pointed so its pose finds the extra list. */
+extern const uint32_t g_psp_layout_extras[][3];
 extern const unsigned g_psp_layout_extra_count;
 void f_8C018084_orig(void);
 void hle_layout_draw(void) {
     uint32_t r4 = g.r[4], obj = g.r[5];
     f_8C018084_orig();
-    if (!g_psp_layout_extra_count || R32(obj + 0x8C) != LAYOUT_BASE || !R32(obj + 0x1C)) return;
-    uint32_t pose = R16(R32(obj + 0x1C) + 4);
+    if (!g_psp_layout_extra_count || !R32(obj + 0x1C)) return;
+    uint32_t base = R32(obj + 0x8C), pose = R16(R32(obj + 0x1C) + 4);
     for (unsigned i = 0; i < g_psp_layout_extra_count; i++) {
-        if (pose != g_psp_layout_extras[i][0]) continue;
-        W32(obj + 0x8C, g_psp_layout_extras[i][1] - 6u * pose);
+        if (base != g_psp_layout_extras[i][0] || pose != g_psp_layout_extras[i][1]) continue;
+        W32(obj + 0x8C, g_psp_layout_extras[i][2] - 6u * pose);
         g.r[4] = r4;
         g.r[5] = obj;
         f_8C018084_orig();
-        W32(obj + 0x8C, LAYOUT_BASE);
+        W32(obj + 0x8C, base);
+    }
+}
+
+/* f_8C017900 draws a layout the same way, its base from a table of them,
+ * 8C188810[obj+0x84 - 1] (versus' select screen: 0x8C0C0714) */
+#define LAYOUT_SETS 0x8C188810u
+void f_8C017900_orig(void);
+void hle_layout_draw_set(void) {
+    uint32_t r4 = g.r[4], obj = g.r[5];
+    f_8C017900_orig();
+    if (!g_psp_layout_extra_count || !R32(obj + 0x1C) || !R32(obj + 0x84)) return;
+    uint32_t set = LAYOUT_SETS + 4u * (R32(obj + 0x84) - 1u);
+    uint32_t base = R32(set), pose = R16(R32(obj + 0x1C) + 4);
+    for (unsigned i = 0; i < g_psp_layout_extra_count; i++) {
+        if (base != g_psp_layout_extras[i][0] || pose != g_psp_layout_extras[i][1]) continue;
+        W32(set, g_psp_layout_extras[i][2] - 6u * pose);
+        g.r[4] = r4;
+        g.r[5] = obj;
+        f_8C017900_orig();
+        W32(set, base);
     }
 }
 

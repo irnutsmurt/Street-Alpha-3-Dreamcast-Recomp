@@ -560,6 +560,31 @@ compiled as calls through the table, which has no Dreamcast counterpart (the
 CPU Eagle crashed). `mipsgen.Function.jump_table` now takes a `.rodata`
 table's entry count from the switch's bounds check (`sltiu t, index, n`).
 
+### Versus mode's select screen
+
+The PSP's versus grid (`0x227378`, 7 x 7) has the new characters in the
+fifth row (Eagle, Maki, random, Yun, Ingrid; row 4 without its random
+cells) and the World Tour entries in a seventh (its setup writes them at
+cell 42 + column, `0x9C854`); its layout (`0x225A40`) has the seventh row at
+y 80. The Dreamcast's row 5 is the entries, and its screen has the SPEED and
+STAGE lines right under it. The add-on (`screens.py`) gives it the PSP's
+rows, keeping the two random cells in row 4:
+
+- row 5: Eagle, Maki, Yun, Ingrid in columns 1, 2, 4, 5 (grid bytes; faces
+  and frames from extra lists after the layout's own, as for the arcade
+  screen: `hle_layout_draw`, now keyed by the layout's base too);
+- the entries go to row 6: their records' y 56 -> 80, and the code's own
+  constants: `f_8C06EFAC`'s cell 35 + column -> 42, `f_8C0703CC`'s entry row
+  5 -> 6, the cursor's last row 5 -> 6;
+- the SPEED and STAGE lines down 24 (`0xAE`, `0xBE` -> `0xC6`, `0xD6`);
+- `8C0BE45A` (a character's face part) moved, with the new faces.
+
+Constants in the code: `chartables.IMMEDIATES` lists instructions (`mov
+#imm`, `add #imm`, `cmp/eq #imm`, `mov.w @(disp,PC)`) whose value the
+recompiled code reads from `EXT_IMM` (`98DFF000`) + 4 x index; the runtime
+writes the instructions' own values there at boot (`char_tables_init`, the
+recompiler's `g_imm_defaults`), and the add-on's patches change some.
+
 ### The CPU
 
 The CPU plays a character by a script (dreamcast.md, CPU players). The

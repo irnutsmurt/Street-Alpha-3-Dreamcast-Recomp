@@ -25,6 +25,7 @@ void char_tables_init(void) {
         /* the new entries: copies of the first (Ryu's) until the add-on says otherwise */
         for (uint32_t c = t->count; c < t->entries; c++) memcpy(dst + c * t->size, dst, t->size);
     }
+    for (unsigned k = 0; k < g_imm_count; k++) W32(g_imm_base + 4 * k, g_imm_defaults[k]);
     for (unsigned off = 0; off + 8 <= g_psp_char_data_size;) {
         uint32_t a, n;
         memcpy(&a, g_psp_char_data + off, 4);

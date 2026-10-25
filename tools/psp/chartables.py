@@ -41,6 +41,30 @@ EXT_NAMES = 0x98E30000   # the add-on's file names (file_patches())
 EXT_ROUTES = 0x98E31000  # arcade routes (arcade.py)
 EXT_SELECT = 0x98E40000  # the select screens' records (screens.py)
 EXT_END = 0x98E80000     # (build_char.py: the PSP-only variables from here)
+EXT_IMM = 0x98DFF000     # constants of the game's code the add-on can change (IMMEDIATES)
+
+# Instructions whose constant (mov #imm, add #imm, mov.w @(disp,PC)) the recompiled code reads
+# from EXT_IMM + 4 x index instead: the runtime writes the instructions' own values there at boot
+# (runtime/chartables.c) and the add-on's patches change some (screens.py: the versus grid's 7th row)
+IMMEDIATES = [
+    (0x8C0706E4, "versus select cursor: the last row (5)"),
+    (0x8C0703E6, "versus select: the World Tour entries' row (cmp/eq #5, f_8C0703CC)"),
+    (0x8C06F0BE, "versus select: the World Tour entries' row in the grid (35: row 5)"),
+    (0x8C06F138, "the same"),
+    (0x8C06F162, "the same"),
+    (0x8C06F85A, "versus select: the SPEED line's y (0xAE)"),
+    (0x8C06F868, "the same, its value"),
+    (0x8C06F892, "versus select: the STAGE line's y (0xBE)"),
+    (0x8C06F8A4, "the same, its value"),
+]
+
+
+def immediate(address):
+    """the place in the extension RAM of an instruction's constant (IMMEDIATES)"""
+    for k, (a, _) in enumerate(IMMEDIATES):
+        if a == address:
+            return EXT_IMM + 4 * k
+    raise KeyError(hex(address))
 CHARS = 0x2A             # entries after the move: 0x00-0x29
 NEW = range(0x26, 0x2A)
 PSP_OFF = 0x74           # BOOT.BIN: file offset = address + 0x74
@@ -146,6 +170,7 @@ TABLES = [
     T(0x8C0C1AC8, 2, None, note="the world map's name strip: a bank 8 part (f_8C06DC3C; spacing 8C0C1B14)"),
     T(0x8C0C11F4, 4, None, note="select: the name strip down the side: u16 spacing (0x8000: name 8 up), u16 bank 8 part (f_8C06B488)"),
     T(0x8C0C142C, 2, None, note="select: name banner, a bank 8 part (f_8C06C866)"),
+    T(0x8C0BE45A, 2, None, note="a character's face: bank B part (f_8C067E34, f_8C06EFAC; versus' World Tour entries)"),
     T(0x8C0C1478, 2, None, note="select: name banner width (f_8C06C866)"),
     # --- not by character: the PSP's additions the new characters use ---
     T(0x8C0B39C8, 4, 0x2178C8, "cmd", count=64, entries=66, new=range(64, 66),

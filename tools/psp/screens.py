@@ -42,6 +42,12 @@ PSP_STRIP_PARTS = 0x2C8ABC    # u8 per character: bank 8 part - 0xF4
 MAP_STRIPS = 0x8C0C1AC8       # the world map's name strip: bank 8 part (f_8C06DC3C; its spacing 8C0C1B14)
 PSP_MAP_STRIP_PARTS = 0x2C8A68  # u8 per character: bank 8 part - 0x94
 CELLS = {0x28: (5, 0), 0x29: (5, 6), 0x26: (6, 2), 0x27: (6, 4)}  # the PSP's arcade grid
+FACE_PARTS = 0x8C0BE45A       # a character's face, a bank B part (moved, chartables.py)
+# versus mode's select screen: the grid (7 x 6, room after it for a 7th row) and its layout (the
+# faces' list, then the frames' from record 41): rows at y -64 + 24 x row, columns x -88 + 24 x col
+VS_GRID, VS_LAYOUT = 0x8C0C1D84, 0x8C0C0714
+VS_CELLS = {0x26: 1, 0x27: 2, 0x28: 4, 0x29: 5}  # the PSP's fifth row: Eagle, Maki, (random), Yun, Ingrid
+VS_ROW, VS_ENTRIES_Y, VS_ROW_Y = 5, 80, 56
 NAME_COPIES = (0x8C0AB820, 0x8C0C0D26)  # tables holding the same name parts as NAMES
 # the VS screen's portraits: objects set their animation to group + 8 x
 # character, the group from ANIM_GROUPS (a pointer per kind of object). Two
@@ -205,8 +211,35 @@ def build(dc_select, psp_select, main, boot):
     extras = []
     for pose, lst in ((0, extra_faces), (len(recs), extra_frames)):
         patches.append((data, bytes(lst)))
-        extras.append((pose, data))
+        extras.append((FACES, pose, data))
         data += (len(lst) + 3) & ~3
+    # versus mode's select screen. The PSP's has 7 rows: the new characters in the fifth, where
+    # the Dreamcast has the World Tour entries (f_8C06EFAC fills them in: cells 35 + column, records
+    # at y 56), the entries in a seventh. Here too: the entries go down a row (their cells' 35 is
+    # 42, their faces' and frames' records' y 80), the cursor's last row (f_8C070648) and the
+    # entries' row (f_8C0703CC) are 6, and the SPEED and STAGE lines (f_8C06F7A4) go down 24 to
+    # make room (chartables.IMMEDIATES). The two random cells stay at the ends of row 4.
+    for c, col in VS_CELLS.items():
+        patches.append((VS_GRID + 7 * VS_ROW + col, bytes([c])))
+        patches.append((tables[FACE_PARTS].ext + 2 * c, struct.pack("<H", faces[c])))
+    vfaces = layout(main, VS_LAYOUT)
+    vframes = layout(main, VS_LAYOUT + 6 * len(vfaces))
+    for a, x, y, v in vfaces + vframes:
+        if y == VS_ROW_Y:
+            patches.append((a + 2, struct.pack("<h", VS_ENTRIES_Y)))
+    vs_faces, vs_frames = bytearray(), bytearray()
+    for c, col in VS_CELLS.items():
+        x = col * 24 - 88
+        vs_faces += struct.pack("<hhH", x, VS_ROW_Y, faces[c])
+        vs_frames += struct.pack("<hhH", x, VS_ROW_Y, FRAME_PART)
+    for pose, lst in ((0, vs_faces), (len(vfaces), vs_frames)):
+        struct.pack_into("<H", lst, len(lst) - 2, struct.unpack_from("<H", lst, len(lst) - 2)[0] | 0x8000)
+        patches.append((data, bytes(lst)))
+        extras.append((VS_LAYOUT, pose, data))
+        data += (len(lst) + 3) & ~3
+    for a, v in ((0x8C0706E4, 6), (0x8C0703E6, 6), (0x8C06F0BE, 42), (0x8C06F138, 42), (0x8C06F162, 42),
+                 (0x8C06F85A, 0xAE + 24), (0x8C06F868, 0xAE + 24), (0x8C06F892, 0xBE + 24), (0x8C06F8A4, 0xBE + 24)):
+        patches.append((chartables.immediate(a), struct.pack("<I", v)))
     assert data <= chartables.EXT_END, "the select screens' records outgrew their room"
     return pac.build(pac.order(dc_select), d), patches, dict(portrait_palettes=base, layout_extras=extras,
                                                              vs_palette_shift=vs_shift)

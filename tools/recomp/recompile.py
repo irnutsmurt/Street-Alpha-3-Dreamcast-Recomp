@@ -61,9 +61,10 @@ HOOKS = {
     0x8C018E9C: "hle_sprite_draw",  # debug: SFA3_SPRITE_LOG (sprite_log.c)
     0x8C069D64: "hle_select_palette",  # select screen palettes: the PSP characters' portraits (psp_load.c)
     0x8C018084: "hle_layout_draw",  # layouts (select screen): the PSP characters' extra cells (psp_load.c)
+    0x8C017900: "hle_layout_draw_set",  # the same, a base from a table (versus' select screen)
 }
 # Hooked functions whose original body is still emitted, as <name>_orig.
-KEEP_ORIGINAL = {0x8C0253F8, 0x8C058516, 0x8C06443C, 0x8C05206E, 0x8C0520F0, 0x8C052180, 0x8C052268, 0x8C069D34, 0x8C069DCC, 0x8C0126F4, 0x8C012C80, 0x8C018E9C, 0x8C069D64, 0x8C018084, 0x8C01348E, 0x8C07AF3C, 0x8C07D988, 0x8C0625E0, 0x8C02EB8C, 0x8C02EE26, 0x8C07B7B4, 0x8C07D2E0, 0x8C07CD5A, 0x8C07CE14, 0x8C094510, 0x8C0100BC, 0x8C07BC42, 0x8C07E17C, 0x8C06273C}
+KEEP_ORIGINAL = {0x8C0253F8, 0x8C017900, 0x8C058516, 0x8C06443C, 0x8C05206E, 0x8C0520F0, 0x8C052180, 0x8C052268, 0x8C069D34, 0x8C069DCC, 0x8C0126F4, 0x8C012C80, 0x8C018E9C, 0x8C069D64, 0x8C018084, 0x8C01348E, 0x8C07AF3C, 0x8C07D988, 0x8C0625E0, 0x8C02EB8C, 0x8C02EE26, 0x8C07B7B4, 0x8C07D2E0, 0x8C07CD5A, 0x8C07CE14, 0x8C094510, 0x8C0100BC, 0x8C07BC42, 0x8C07E17C, 0x8C06273C}
 
 
 def extra_entries():
@@ -85,6 +86,18 @@ def _chartables():
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+def immediate_value(img, a):
+    """the register value an instruction with a constant (IMMEDIATES) loads or adds"""
+    import sh4
+    ins = sh4.decode(img.u16(a))
+    if ins.name in ("mov #imm", "add #imm", "cmp/eq #imm"):
+        return (ins.i - 0x100 if ins.i & 0x80 else ins.i) & 0xFFFFFFFF
+    if ins.name == "mov.w@pc":
+        v = img.u16(sh4.pcrel_addr(ins, a))
+        return (v - 0x10000 if v & 0x8000 else v) & 0xFFFFFFFF
+    raise ValueError(f"{a:08X}: {ins.name} has no constant to read from the memory")
 
 
 def write_if_changed(path, text):
@@ -131,6 +144,9 @@ def run(disc_dir, out_dir, report=None, progress=None):
     report(f"{len(codegen.RELOCATE)} character tables moved")
     data = open(os.path.join(disc_dir, "1ST_READ.BIN"), "rb").read()
     img = Image(data, MAIN_BASE)
+    codegen.IMMEDIATE.clear()
+    codegen.IMMEDIATE.update({a: chartables.immediate(a) for a, _ in chartables.IMMEDIATES})
+    imm_defaults = [immediate_value(img, a) for a, _ in chartables.IMMEDIATES]
 
     # --- code overlays: characters (PLnnA/B/C.BIN) and arcade endings (ENDnn.BIN) ---
     ovl_files = sorted(f for f in os.listdir(disc_dir)
@@ -241,6 +257,9 @@ def run(disc_dir, out_dir, report=None, progress=None):
     ct += [f"  {{0x{t.dc:08X}u, {t.copy_count}u, {t.size}u, 0x{t.ext:08X}u, {t.entries}u}},  /* {t.note} */"
            for t in chartables.TABLES]
     ct += ["};", f"const unsigned g_char_table_count = {len(chartables.TABLES)};", ""]
+    ct += [f"const uint32_t g_imm_base = 0x{chartables.EXT_IMM:08X}u;",
+           "const uint32_t g_imm_defaults[] = {" + ", ".join(f"0x{v:08X}u" for v in imm_defaults) + "};",
+           f"const unsigned g_imm_count = {len(imm_defaults)};", ""]
     write_if_changed(os.path.join(out_dir, "char_tables.c"), "\n".join(ct))
     files.append("char_tables.c")
 
