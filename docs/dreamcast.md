@@ -248,6 +248,14 @@ picks: 1-6).
 
 `f_8C0246A4`: the random number, a signed byte (`8C17FBC0` +0x40 its state).
 
+## CPU players
+
+A CPU fighter runs a script: `f_8C058516(fighter, script)` (the interpreter)
+counts fighter +0x1D5 up, keeps the command (u16) at +0x1CA and calls
+`8C0B9EBC`[command] (80 commands, `f_8C058536`...) with the script past it.
+`f_8C058502` runs the routine `8C0B9EB0`[fighter +0x1C8]. The scripts are
+the character's data (in its file); the CPU code is `8C0575xx`-`8C059Exx`.
+
 ## Sound
 
 `f_8C059F2C(object, side, sound, ...)`: sound number (high byte: category;

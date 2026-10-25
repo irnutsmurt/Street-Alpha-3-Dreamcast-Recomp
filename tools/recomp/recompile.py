@@ -52,6 +52,7 @@ HOOKS = {
     0x8C052180: "hle_throw_c",
     0x8C052268: "hle_throw_d",
     0x8C0253F8: "hle_fighter_reset",  # a fighter's reset for a round: the PSP-only fields too (psp.c)
+    0x8C058516: "hle_ai_step",  # the CPU script interpreter: the PSP's command 80 (psp.c)
     0x8C06443C: "hle_hud",  # the fight HUD: the PSP characters' faces and names (psp_load.c)
     0x8C069D34: "hle_vs_palette",  # VS portraits' palettes: the PSP characters' (psp_load.c)
     0x8C069DCC: "hle_count_use",  # the use counters (saved): not for the PSP characters (psp_load.c)
@@ -62,7 +63,7 @@ HOOKS = {
     0x8C018084: "hle_layout_draw",  # layouts (select screen): the PSP characters' extra cells (psp_load.c)
 }
 # Hooked functions whose original body is still emitted, as <name>_orig.
-KEEP_ORIGINAL = {0x8C0253F8, 0x8C06443C, 0x8C05206E, 0x8C0520F0, 0x8C052180, 0x8C052268, 0x8C069D34, 0x8C069DCC, 0x8C0126F4, 0x8C012C80, 0x8C018E9C, 0x8C069D64, 0x8C018084, 0x8C01348E, 0x8C07AF3C, 0x8C07D988, 0x8C0625E0, 0x8C02EB8C, 0x8C02EE26, 0x8C07B7B4, 0x8C07D2E0, 0x8C07CD5A, 0x8C07CE14, 0x8C094510, 0x8C0100BC, 0x8C07BC42, 0x8C07E17C, 0x8C06273C}
+KEEP_ORIGINAL = {0x8C0253F8, 0x8C058516, 0x8C06443C, 0x8C05206E, 0x8C0520F0, 0x8C052180, 0x8C052268, 0x8C069D34, 0x8C069DCC, 0x8C0126F4, 0x8C012C80, 0x8C018E9C, 0x8C069D64, 0x8C018084, 0x8C01348E, 0x8C07AF3C, 0x8C07D988, 0x8C0625E0, 0x8C02EB8C, 0x8C02EE26, 0x8C07B7B4, 0x8C07D2E0, 0x8C07CD5A, 0x8C07CE14, 0x8C094510, 0x8C0100BC, 0x8C07BC42, 0x8C07E17C, 0x8C06273C}
 
 
 def extra_entries():
