@@ -17,3 +17,5 @@ sfa3.cfg
 /outline*.png
 *.pyc
 /sfa3icon.png
+*.zip
+*.cso

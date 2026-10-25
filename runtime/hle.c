@@ -1,6 +1,7 @@
 /* Native implementations of the Dreamcast boot ROM services the game calls:
  * system info, ROM font, flash ROM, GD-ROM drive and misc vectors. */
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "cpu.h"
@@ -293,6 +294,19 @@ void hle_init(const char *gdi_path) {
     if (!gdi_open(gdi_path))
         fatal("cannot open disc image %s (moved or deleted? Open the setup app and convert again from your disc image)",
               gdi_path);
+    /* testing: SFA3_REPLACE=NAME=path[;NAME=path...] reads those disc files from elsewhere */
+    const char *rep = getenv("SFA3_REPLACE");
+    if (rep) {
+        char buf[4096];
+        snprintf(buf, sizeof buf, "%s", rep);
+        for (char *item = strtok(buf, ";"); item; item = strtok(NULL, ";")) {
+            char *eq = strchr(item, '=');
+            if (eq) {
+                *eq = 0;
+                gdi_override(item, eq + 1);
+            }
+        }
+    }
     hle_reset();
 }
 

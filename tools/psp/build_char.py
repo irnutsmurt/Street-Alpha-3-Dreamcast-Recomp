@@ -1,0 +1,512 @@
+"""Build PSP characters for the Dreamcast game: recompiled code, and character
+files (PLnnA/B/C.BIN) in the Dreamcast's form.
+
+    python3 tools/psp/build_char.py <PSP BOOT.BIN> <PSP data dir> <Dreamcast files dir> <out dir> <maps.json>
+                                    <character>=<file id>[,<character>=<file id>...]
+
+character: the PSP's character number (0x00-0x29); file id: the Dreamcast
+file number to write (PLnnA/B/C.BIN). The maps come from align.py.
+
+A character file holds, from its start:
+  0x000  the entry stub (the engine calls the file's first address)
+  0x008  a stub for every function the engine may call (8 bytes: FFFF 5053 <index> FFFF)
+         then the PSP data the code uses that has no Dreamcast counterpart,
+         the character's own data (descriptor and tables, pointers turned
+         into Dreamcast ones) and its animation data (the PSP keeps it in
+         the PAC's section 0x11, the Dreamcast in this file).
+"""
+import json
+import os
+import struct
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+
+import mips  # noqa: E402
+from mipsgen import Boot, Function, Gen, R_MIPS_HI16, R_MIPS_LO16, TEXT_END  # noqa: E402
+
+SLOT_BASE, SLOT_SIZE = 0x8C800000, 0x14000
+DATA, DATA_END = 0x1FEDE0, 0x1FEDE0 + 0xD6138
+DESC_WORDS = 39
+CODE_WORDS = range(16, 28)
+HELPER_LIB = (0xCE000, 0xD1000)      # code only the PSP-only characters use
+BUILDER = 0x6AB48                    # builds descriptor words 0-11 / 32-34 at load: done here instead
+PSP_FIGHTERS, PSP_FIGHTERS_END = 0x80AF70, 0x80AF70 + 4 * 0x498
+PSP_POOLS, PSP_POOLS_END = 0xA39840, 0xA3E7C0
+PSP_SHOTS = 0xA37080                  # projectiles, then the effect pools
+PALETTES = (0x2C7F00, 0x2C8500)          # effect palettes the PSP shares between characters
+
+
+def descriptors(boot):
+    """the PSP's character descriptors, in character order (0x13 has none)"""
+    found = []
+    for a in range(DATA, DATA_END - DESC_WORDS * 4, 4):
+        w = struct.unpack_from("<%dI" % DESC_WORDS, boot.data, a + 0x74)
+        code = sum(1 for k in CODE_WORDS if 0x1000 <= w[k] < TEXT_END)
+        dat = sum(1 for k in (12, 13, 14, 15, 28, 29, 30, 36, 37, 38) if DATA <= w[k] < DATA_END)
+        if code + dat >= 21 and 0x1000 <= w[31] < TEXT_END:
+            if found and a - found[-1][0] < DESC_WORDS * 4:
+                continue
+            found.append((a, list(w)))
+    ids = [i for i in range(0x26) if i != 0x13] + [0x26, 0x27, 0x28, 0x29]
+    return dict(zip(ids, found))
+
+
+def pac_sections(path):
+    d = open(path, "rb").read()
+    n = struct.unpack_from("<I", d, 0)[0]
+    out, off = {}, 0x800
+    for k in range(n):
+        t, s = struct.unpack_from("<II", d, 8 + 8 * k)
+        out[t] = d[off:off + s]
+        off = (off + s + 0x7FF) & ~0x7FF
+    return out
+
+
+class Character:
+    def __init__(self, boot, cid, descs, code_ranges):
+        self.boot, self.cid = boot, cid
+        self.desc, self.dw = descs[cid]
+        self.code = code_ranges[cid]
+        self.entry = self.find_entry()
+        if self.entry < self.code[0]:
+            self.code = (self.entry, self.code[1])
+        lo, hi = self.reach()
+        # up to the next character's data
+        nxt = [c for c in descs if descs[c][0] > self.desc]
+        if nxt:
+            n = min(nxt, key=lambda c: descs[c][0])
+            other = Character.__new__(Character)
+            other.boot, other.cid, (other.desc, other.dw), other.code = boot, n, descs[n], code_ranges[n]
+            hi = min(hi, other.reach()[0])
+        self.own = (lo, hi)
+
+    def reach(self):
+        """the data the character's code and descriptor reach, near the descriptor"""
+        b = self.boot
+        lo_win, hi_win = self.desc - 0x9000, self.desc + 0x3000
+        seeds = {self.desc} | {a for a in self.code_refs() if lo_win <= a < hi_win}
+        seen, todo = set(), list(seeds)
+        while todo:
+            a = todo.pop()
+            if a in seen or not lo_win <= a < hi_win:
+                continue
+            seen.add(a)
+            for k in range(0, 0x200, 4):
+                if a + k in b.data_ptrs:
+                    v = b.u32(a + k)
+                    if DATA <= v < DATA_END:
+                        todo.append(v)
+        lo, hi = min(seen), max(seen) + 0x200
+        return lo & ~3, (hi + 3) & ~3
+
+    def code_refs(self):
+        """addresses built by HI16/LO16 pairs in the character's code"""
+        b, out, his = self.boot, set(), {}
+        lo, hi = self.code
+        for a in range(lo, hi, 4):
+            rel = b.text_rel.get(a)
+            i = b.insn(a)
+            if rel == R_MIPS_HI16:
+                his[i.rt] = i.imm << 16
+            elif rel == R_MIPS_LO16 and i.rs in his:
+                out.add((his[i.rs] + i.imm) & 0xFFFFFFFF)
+        return out
+
+    def find_entry(self):
+        """the function that copies the descriptor (it builds the descriptor's address)"""
+        b = self.boot
+        lo, hi = self.code
+        lo -= 0x400  # the entry function may sit just before the rest
+        his = {}
+        for a in range(lo, hi, 4):
+            rel = b.text_rel.get(a)
+            i = b.insn(a)
+            if rel == R_MIPS_HI16:
+                his[i.rt] = i.imm << 16
+            elif rel == R_MIPS_LO16 and i.rs in his and (his[i.rs] + i.imm) & 0xFFFFFFFF == self.desc:
+                # back to the function's start: the stack frame setup
+                p = a
+                while p > lo and not (b.insn(p).name == "addiu" and b.insn(p).rt == 29 and b.insn(p).rs == 29
+                                      and b.insn(p).imm < 0):
+                    p -= 4
+                return p
+        raise SystemExit(f"character {self.cid:02X}: no entry function found")
+
+    def function_pointers(self):
+        """code addresses in the character's own data"""
+        b, lo, hi = self.boot, *self.own
+        return {b.u32(a) for a in range(lo, hi, 4) if a in b.data_ptrs and 0x1000 <= b.u32(a) < TEXT_END}
+
+
+class Build:
+    def __init__(self, boot_path, psp_data, maps):
+        self.boot = Boot(boot_path)
+        self.psp_data = psp_data
+        mp = json.load(open(maps))
+        self.fmap = {int(k, 16): int(v, 16) for k, v in mp["functions"].items()}
+        self.gsegs = [(int(a, 16), int(b, 16), int(c, 16)) for a, b, c in mp["globals"]]
+        self.descs = descriptors(self.boot)
+        order = sorted(self.descs)
+        starts = {c: min(w[k] for k in CODE_WORDS if w[k]) for c, (a, w) in self.descs.items()}
+        srt = sorted(starts.items(), key=lambda x: x[1])
+        self.code_ranges = {}
+        for k, (c, s) in enumerate(srt):
+            self.code_ranges[c] = (s, srt[k + 1][1] if k + 1 < len(srt) else 0x1C8000)
+        self.chars = []
+        self.funcs = {}       # PSP address -> Function
+        self.order = []
+        self.taken = []       # functions given stubs, in stub order
+        self.problems = []
+
+    def is_char_code(self, a):
+        return any(lo <= a < hi for lo, hi in (c.code for c in self.chars)) or HELPER_LIB[0] <= a < HELPER_LIB[1]
+
+    def resolve(self, t):
+        if t == BUILDER:
+            return ("nop",)
+        if t in self.funcs:
+            return ("psp", f"p_{t:06X}")
+        if t in self.fmap and not self.is_char_code(t):
+            return ("dc", self.fmap[t])
+        return None
+
+    def add_char(self, cid):
+        c = Character(self.boot, cid, self.descs, self.code_ranges)
+        self.chars.append(c)
+        return c
+
+    def collect(self):
+        """the functions to recompile: the characters' code and whatever it reaches with no Dreamcast counterpart"""
+        todo = []
+        for c in self.chars:
+            todo += [c.dw[k] for k in CODE_WORDS if c.dw[k]] + [c.entry] + sorted(c.function_pointers())
+            todo += [a for a in c.code_refs() if 0x1000 <= a < TEXT_END]
+        taken = set(todo)
+        engine_recompiled = set()
+        while todo:
+            a = todo.pop()
+            if a in self.funcs or a == BUILDER:
+                continue
+            if not self.is_char_code(a) and a in self.fmap:
+                continue
+            if not self.is_char_code(a):
+                engine_recompiled.add(a)
+            f = Function(self.boot, a)
+            self.funcs[a] = f
+            his = {}
+            for x in f.addrs:
+                i = self.boot.insn(x)
+                rel = self.boot.text_rel.get(x)
+                if i.name in ("jal", "j") and i.target is not None and i.target not in f.addrs:
+                    todo.append(i.target)
+                if rel == R_MIPS_HI16:
+                    his[i.rt] = i.imm << 16
+                elif rel == R_MIPS_LO16 and i.rs in his:
+                    v = (his[i.rs] + i.imm) & 0xFFFFFFFF
+                    if 0x1000 <= v < TEXT_END and v not in f.addrs:
+                        todo.append(v)
+                        taken.add(v)
+        self.order = sorted(self.funcs)
+        self.taken = sorted(a for a in taken if a in self.funcs)
+        self.engine_recompiled = sorted(engine_recompiled)
+
+    # ---- address translation (build time: data pointers) ----
+    def global_dc(self, a):
+        for lo, hi, dc in self.gsegs:
+            if lo <= a < hi:
+                return dc + (a - lo)
+        return None
+
+    def layout(self):
+        """offsets of everything in a character file"""
+        self.stub_off = {a: 8 + 8 * k for k, a in enumerate(self.taken)}
+        self.shared_off = {}
+        off = 8 + 8 * len(self.taken)
+        # data the characters' code reaches outside their own data and with no Dreamcast counterpart
+        shared = set()
+        for c in self.chars:
+            for f in (self.funcs[a] for a in self.order):
+                pass
+        refs = set(self.data_refs())
+        for c in self.chars:  # pointers in the characters' own data, too
+            lo, hi = c.own
+            refs |= {self.boot.u32(a) for a in range(lo, hi, 4) if a in self.boot.data_ptrs}
+        for a in sorted(refs):
+            if self.global_dc(a) is None and not self.in_own(a) and DATA <= a < DATA_END:
+                shared.add(a & ~0xF)
+        ranges = []
+        for a in sorted(shared):
+            if ranges and a <= ranges[-1][1] + 0x40:
+                ranges[-1][1] = max(ranges[-1][1], a + 0x40)
+            else:
+                ranges.append([a, a + 0x40])
+        self.shared = []
+        off = (off + 15) & ~15
+        for lo, hi in ranges:
+            self.shared.append((lo, hi, off))
+            off += hi - lo
+        self.common_end = off
+
+    def in_own(self, a):
+        return any(c.own[0] <= a < c.own[1] for c in self.chars)
+
+    def data_refs(self):
+        """data addresses built by the recompiled code"""
+        out = set()
+        for fa in self.order:
+            f = self.funcs[fa]
+            his = {}
+            for x in f.addrs:
+                i = self.boot.insn(x)
+                rel = self.boot.text_rel.get(x)
+                if rel == R_MIPS_HI16:
+                    his[i.rt] = i.imm << 16
+                elif rel == R_MIPS_LO16 and i.rs in his:
+                    out.add((his[i.rs] + i.imm) & 0xFFFFFFFF)
+        return out
+
+
+# ---------------- the descriptor tables the PSP builds at load (0x6AB48 / 0x6A638) ----------------
+
+# (index byte, D offset) in the order the PSP's builder writes them
+BUILDER_SLOTS = [(0, 0xC8), (1, 0x308), (2, 0x548), (3, 0x788), (4, 0x9D4), (5, 0x9D8), (6, 0x9DC), (7, 0x9E0),
+                 (8, 0x9E4), (9, 0x9E8), (10, 0x9EC), (11, 0x9F0), (12, 0x9FC), (13, 0x10), (14, 0x18), (15, 0x20),
+                 (16, 0x28), (17, 0x2C), (18, 0x80), (19, 0x84), (20, 0x88)]
+D_SIZE = 0xA08
+
+
+def pool_words(sec, idx):
+    """what 0x6A638 writes for entry idx of section 0x11: ('A', offset) values"""
+    A = 0x208
+    off = struct.unpack_from("<I", sec, 8 + idx * 4)[0]
+    cnt = struct.unpack_from("<i", sec, 0x108 + idx * 4)[0]
+    if cnt == 0:
+        return [("A", off)]
+    if cnt == -1:
+        out, p = [], A + off
+        while True:
+            v = struct.unpack_from("<i", sec, p)[0]
+            if v == -1:
+                return out
+            out.append(("A", 10 * v))
+            p += 4
+    if cnt > 0:
+        out, p = [], A + off
+        for k in range(cnt):
+            v = struct.unpack_from("<I", sec, p)[0]
+            out.append(("A", struct.unpack_from("<I", sec, 8 + 4 * (idx + v + 1))[0]))
+            p += 4
+        return out
+    return []
+
+
+def build_d(sec, index_bytes):
+    """the descriptor RAM block as the PSP's builder leaves it: D offset -> value
+    (('A', off) into section 0x11's data, ('D', off) into D itself)"""
+    d = {}
+    for k, doff in BUILDER_SLOTS:
+        idx = struct.unpack_from("<b", index_bytes, k)[0]
+        for n, v in enumerate(pool_words(sec, idx)):
+            d[doff + 4 * n] = v
+    for k in range(3):
+        d[0x9C8 + 4 * k] = ("D", 0x9D4)
+    d[0x14] = ("D", 0x9C8)
+    d[0x0], d[0x4], d[0x8], d[0xC] = ("D", 0xC8), ("D", 0x308), ("D", 0x548), ("D", 0x788)
+    d[0x1C], d[0x24] = ("D", 0x9F0), ("D", 0x9FC)
+    return d
+
+
+# ---------------- writing ----------------
+
+def stub(index):
+    return struct.pack("<HHHH", 0xFFFF, 0x5053, index, 0xFFFF)
+
+
+class Writer:
+    def __init__(self, build, c, sec11, text=None):
+        self.b, self.c, self.sec = build, c, sec11
+        b = build
+        self.own_off = b.common_end
+        lo, hi = c.own
+        self.sec_off = (self.own_off + (hi - lo) + 15) & ~15
+        self.d_off = (self.sec_off + len(sec11) - 0x208 + 15) & ~15
+        index_bytes = b.boot.data[c.desc + DESC_WORDS * 4 + 0x74:c.desc + DESC_WORDS * 4 + 0x74 + 24]
+        self.d = build_d(sec11, index_bytes)
+        self.size = self.d_off + max(D_SIZE, max(self.d) + 4)
+        self.text, self.text_off = None, self.size
+        if text is not None:
+            self.text = text
+            self.size += 4 * text[0] + sum(len(r) for r in text[1])
+        if self.size > SLOT_SIZE:
+            raise SystemExit(f"character {c.cid:02X}: {self.size} bytes, more than a slot holds")
+
+    def xa(self, v, slot):
+        """a PSP pointer in data -> Dreamcast, for the file in this slot"""
+        b, c = self.b, self.c
+        base = SLOT_BASE + slot * SLOT_SIZE
+        lo, hi = c.own
+        if lo <= v < hi:
+            return base + self.own_off + (v - lo)
+        for slo, shi, off in b.shared:
+            if slo <= v < shi:
+                return base + off + (v - slo)
+        if 0x1000 <= v < TEXT_END:
+            if v in b.stub_off:
+                return base + b.stub_off[v]
+            if v in b.fmap and not b.is_char_code(v):
+                return b.fmap[v]
+            b.problems.append(f"{c.cid:02X}: code pointer {v:06X} with no stub or counterpart")
+            return 0
+        g = b.global_dc(v)
+        if g is not None:
+            return g
+        b.problems.append(f"{c.cid:02X}: data pointer {v:06X} with no counterpart")
+        return 0
+
+    def text_for(self, slot):
+        """the dialogue table: (count) pointers then the records; pointers made for this slot"""
+        n, recs = self.text
+        base = SLOT_BASE + slot * SLOT_SIZE + self.text_off
+        out = bytearray()
+        pos = 4 * n
+        for r in recs:
+            out += struct.pack("<I", base + pos)
+            pos += len(r)
+        for r in recs:
+            out += r
+        return bytes(out)
+
+    def dval(self, v, slot):
+        base = SLOT_BASE + slot * SLOT_SIZE
+        kind, off = v
+        return base + (self.sec_off + off if kind == "A" else self.d_off + off)
+
+    def file(self, slot):
+        b, c = self.b, self.c
+        out = bytearray(self.size)
+        fidx = {a: k for k, a in enumerate(b.order)}
+        out[0:8] = stub(fidx[c.entry])
+        for a, off in b.stub_off.items():
+            out[off:off + 8] = stub(fidx[a])
+
+        def copy(lo, hi, off, palette=False):
+            out[off:off + hi - lo] = b.boot.data[lo + 0x74:hi + 0x74]
+            if palette:  # PSP colours are ABGR1555, the Dreamcast's ARGB1555
+                for k in range(off, off + hi - lo - 1, 2):
+                    v = struct.unpack_from("<H", out, k)[0]
+                    struct.pack_into("<H", out, k, (v & 0x83E0) | ((v & 0x1F) << 10) | ((v >> 10) & 0x1F))
+            for a in range(lo, hi, 4):
+                if a in b.boot.data_ptrs:
+                    struct.pack_into("<I", out, off + a - lo, self.xa(b.boot.u32(a), slot))
+        for lo, hi, off in b.shared:
+            copy(lo, hi, off, palette=PALETTES[0] <= lo < PALETTES[1])
+        lo, hi = c.own
+        copy(lo, hi, self.own_off)
+        # the descriptor as the PSP's builder would leave it
+        dpos = self.own_off + (c.desc - lo)
+        for doff, v in self.d.items():
+            if doff < DESC_WORDS * 4:
+                struct.pack_into("<I", out, dpos + doff, self.dval(v, slot))
+        if self.text is not None:  # word 38's entry 1: the dialogue table
+            w38 = self.own_off + (c.dw[38] - lo)
+            struct.pack_into("<I", out, w38 + 4, SLOT_BASE + slot * SLOT_SIZE + self.text_off)
+            out[self.text_off:self.text_off + len(self.text)] = self.text_for(slot)
+        out[self.sec_off:self.sec_off + len(self.sec) - 0x208] = self.sec[0x208:]
+        for doff, v in self.d.items():
+            if doff >= DESC_WORDS * 4:
+                struct.pack_into("<I", out, self.d_off + doff, self.dval(v, slot))
+        return bytes(out)
+
+
+def emit_c(b, out_dir):
+    gen = Gen(b.boot, b.resolve)
+    bodies = [gen.function(b.funcs[a], f"p_{a:06X}") for a in b.order]
+    head = ['/* Generated by tools/psp/build_char.py from the PSP game: do not edit. */',
+            '#include <math.h>', '#include "psp.h"', ""]
+    protos = [f"void p_{a:06X}(void);" for a in b.order]
+    chunks, cur, n = [], [], 0
+    for body in bodies:
+        cur.append(body)
+        n += len(body)
+        if n > 400000:
+            chunks.append(cur)
+            cur, n = [], 0
+    if cur:
+        chunks.append(cur)
+    tables = getattr(gen, "table_defs", [])
+    for k, ch in enumerate(chunks):
+        with open(os.path.join(out_dir, f"psp_code_{k}.c"), "w") as f:
+            f.write("\n".join(head + protos + [""] + tables + [""] + ch) + "\n")
+    regions = [(PSP_FIGHTERS, PSP_FIGHTERS_END, "PSP_R_FIGHTERS", 0), (PSP_SHOTS, PSP_POOLS_END, "PSP_R_POOLS", 0)]
+    regions += [(lo, hi, "PSP_R_LINEAR", dc) for lo, hi, dc in b.gsegs]
+    regions += [(lo, hi, "PSP_R_SLOT", off) for lo, hi, off in b.shared]
+    regions += [(c.own[0], c.own[1], "PSP_R_SLOT", b.common_end) for c in b.chars]
+    regions.sort()
+    code = {a: off | 1 for a, off in b.stub_off.items()}
+    for p, d in b.fmap.items():
+        if p not in code and not b.is_char_code(p):
+            code[p] = d
+    with open(os.path.join(out_dir, "psp_tables.c"), "w") as f:
+        f.write("\n".join(head + protos + [""]))
+        f.write("\nconst PspFn g_psp_fns[] = {\n" + "".join(f"    p_{a:06X},\n" for a in b.order) + "};\n")
+        f.write(f"const unsigned g_psp_fn_count = {len(b.order)};\n")
+        f.write("const PspRegion g_psp_regions[] = {\n" +
+                "".join(f"    {{0x{lo:06X}u, 0x{hi:06X}u, {k}, 0x{base:08X}u}},\n" for lo, hi, k, base in regions) + "};\n")
+        f.write(f"const unsigned g_psp_region_count = {len(regions)};\n")
+        f.write("const PspCode g_psp_code[] = {\n" +
+                "".join(f"    {{0x{p:06X}u, 0x{code[p]:08X}u}},\n" for p in sorted(code)) + "};\n")
+        f.write(f"const unsigned g_psp_code_count = {len(code)};\n")
+    return gen.problems, len(chunks)
+
+
+def dc_text(dc_dir, cid):
+    """the Dreamcast character's pre-fight dialogue (word 38, entry 1), or empty lines"""
+    path = os.path.join(dc_dir, f"PL{cid:02X}A.BIN")
+    if os.path.exists(path):
+        sys.path.insert(0, os.path.join(HERE, "..", "recomp"))
+        from align import Dc
+        dc = Dc(path)
+        dw = dc.descriptor()
+        t = struct.unpack_from("<I", dc.data, dw[38] - SLOT_BASE + 4)[0] - SLOT_BASE
+        ptrs = []
+        while len(ptrs) < 64:
+            v = struct.unpack_from("<I", dc.data, t + 4 * len(ptrs))[0]
+            if not SLOT_BASE <= v < SLOT_BASE + len(dc.data) or (ptrs and v < ptrs[-1]):
+                break
+            ptrs.append(v)
+        ends = ptrs[1:] + [min(v for v in dw if isinstance(v, int) and v > ptrs[-1] and SLOT_BASE <= v < SLOT_BASE + len(dc.data)) if ptrs else 0]
+        return len(ptrs), [dc.data[a - SLOT_BASE:e - SLOT_BASE] for a, e in zip(ptrs, ends)]
+    return 20, [b"\x00\x00\x00\x00"] * 20
+
+
+def main():
+    boot_path, psp_data, dc_dir, out_dir, maps, spec = sys.argv[1:7]
+    b = Build(boot_path, psp_data, maps)
+    pairs = [(int(x, 16), int(y, 16)) for x, y in (p.split("=") for p in spec.split(","))]
+    for cid, _ in pairs:
+        b.add_char(cid)
+    b.collect()
+    b.layout()
+    print(f"functions to recompile: {len(b.funcs)} (stubs {len(b.taken)})")
+    print("engine functions recompiled from the PSP:", " ".join(f"{a:06X}" for a in b.engine_recompiled))
+    os.makedirs(out_dir, exist_ok=True)
+    for (cid, fid), c in zip(pairs, b.chars):
+        sec11 = pac_sections(os.path.join(psp_data, f"pl{cid:02x}_u.pac"))[0x11]
+        w = Writer(b, c, sec11, dc_text(dc_dir, cid))
+        for slot, letter in enumerate("ABC"):
+            open(os.path.join(out_dir, f"PL{fid:02X}{letter}.BIN"), "wb").write(w.file(slot))
+        json.dump({"own": w.own_off, "own_psp": c.own, "desc_psp": c.desc, "sec": w.sec_off, "d": w.d_off,
+                   "text": w.text_off, "shared": b.shared, "stubs": len(b.taken)},
+                  open(os.path.join(out_dir, f"PL{fid:02X}.layout.json"), "w"))
+        print(f"character {c.cid:02X} -> PL{fid:02X}A/B/C.BIN: entry {c.entry:06X}, code {c.code[0]:06X}-{c.code[1]:06X}, "
+              f"own data {c.own[0]:06X}-{c.own[1]:06X}, {w.size} bytes")
+    problems, nfiles = emit_c(b, out_dir)
+    for p in sorted(set(b.problems + problems))[:60]:
+        print("  problem:", p)
+    print(f"{len(set(b.problems + problems))} problems; C in {nfiles} files")
+
+
+if __name__ == "__main__":
+    main()

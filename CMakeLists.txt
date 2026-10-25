@@ -16,6 +16,13 @@ if(NOT EXISTS ${GEN}/sources.txt)
 endif()
 file(STRINGS ${GEN}/sources.txt GEN_FILES)
 list(TRANSFORM GEN_FILES PREPEND ${GEN}/)
+# PSP characters (tools/psp/build_char.py), when built
+file(GLOB PSP_FILES ${CMAKE_SOURCE_DIR}/build/psp_out/psp_*.c)
+if(PSP_FILES)
+  list(APPEND GEN_FILES ${PSP_FILES})
+else()
+  list(APPEND GEN_FILES ${CMAKE_SOURCE_DIR}/runtime/psp_none.c)
+endif()
 
 # Recompiled game code: large, machine-generated; optimise but skip warnings.
 add_library(sfa3_game STATIC ${GEN_FILES})
@@ -28,7 +35,7 @@ set(RUNTIME_SRC
   runtime/ta.c runtime/hle.c runtime/gdi.c runtime/maple.c runtime/aica.c
   runtime/overlay.c runtime/input_sdl.c runtime/task.c
   runtime/fiber.c runtime/sjlj.c runtime/arm_rt.c runtime/settings.c runtime/menu.c runtime/controls.c runtime/options.c runtime/display_menu.c runtime/buttoncfg.c runtime/pause_menu.c runtime/title_quit.c runtime/net.c runtime/netplay.c
-  runtime/gameui.c runtime/lobby.c runtime/sprite_swap.c runtime/cheats.c runtime/option_menu.c)
+  runtime/gameui.c runtime/lobby.c runtime/sprite_swap.c runtime/cheats.c runtime/option_menu.c runtime/psp.c)
 if(RENDERER STREQUAL "null")
   list(APPEND RUNTIME_SRC runtime/renderer_null.c)
 else()

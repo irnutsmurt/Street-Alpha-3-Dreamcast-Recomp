@@ -1,0 +1,9 @@
+/* No PSP characters built: empty tables for psp.c. */
+#include "psp.h"
+
+const PspRegion g_psp_regions[] = {{0, 0, PSP_R_LINEAR, 0}};
+const unsigned g_psp_region_count = 0;
+const PspCode g_psp_code[] = {{0, 0}};
+const unsigned g_psp_code_count = 0;
+const PspFn g_psp_fns[] = {0};
+const unsigned g_psp_fn_count = 0;

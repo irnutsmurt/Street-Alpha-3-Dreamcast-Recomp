@@ -75,9 +75,104 @@ int gdi_open(const char *path) {
     return s_ntracks;
 }
 
+/* Replacement files: a file of the disc's root directory read from a file of
+ * ours instead (an add-on's character, say). Its directory record is changed
+ * as the game reads it, to point at sectors past the end of the disc (from
+ * VIRTUAL_LBA) and to give the new size, so the replacement may be any size. */
+#define VIRTUAL_LBA 0x00800000u
+#define OVERRIDE_MAX 64
+typedef struct {
+    char name[32];  /* as in the directory, without ";1" */
+    FILE *f;
+    uint32_t size, lba, sectors;
+    uint32_t dir_lba, dir_off;  /* where its record is */
+} Override;
+static Override s_over[OVERRIDE_MAX];
+static int s_nover, s_over_ready;
+static uint32_t s_next_virtual = VIRTUAL_LBA;
+
+static int read_real(uint32_t lba, uint8_t *out);
+
+void gdi_override(const char *name, const char *path) {
+    if (s_nover >= OVERRIDE_MAX) return;
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        logf_("disc: replacement for %s missing: %s", name, path);
+        return;
+    }
+    Override *o = &s_over[s_nover++];
+    memset(o, 0, sizeof *o);
+    snprintf(o->name, sizeof o->name, "%s", name);
+    o->f = f;
+    fseek64(f, 0, SEEK_END);
+    o->size = (uint32_t)ftell64(f);
+    o->sectors = (o->size + 2047) / 2048;
+    o->lba = s_next_virtual;
+    s_next_virtual += (o->sectors + 15) & ~15u;
+    s_over_ready = 0;
+}
+
+/* find each replaced file's record in the root directory (ISO9660 in the
+ * high-density area: its volume descriptor 16 sectors in) */
+static void find_records(void) {
+    s_over_ready = 1;
+    uint32_t hd = 0;
+    for (int i = 0; i < s_ntracks; i++)
+        if (s_tracks[i].lba >= 45000 && (!hd || s_tracks[i].lba < hd)) hd = s_tracks[i].lba;
+    uint8_t sec[2048];
+    if (!hd || !read_real(hd + 16, sec) || memcmp(sec + 1, "CD001", 5)) return;
+    uint32_t root, len;
+    memcpy(&root, sec + 156 + 2, 4);
+    memcpy(&len, sec + 156 + 10, 4);
+    for (uint32_t s = 0; s < (len + 2047) / 2048; s++) {
+        if (!read_real(root + s, sec)) return;
+        for (uint32_t off = 0; off < 2048 && sec[off];) {
+            uint8_t rlen = sec[off], nlen = sec[off + 32];
+            const char *nm = (const char *)sec + off + 33;
+            for (int k = 0; k < s_nover; k++) {
+                size_t l = strlen(s_over[k].name);
+                if (nlen >= l && !memcmp(nm, s_over[k].name, l) && (nlen == l || nm[l] == ';')) {
+                    s_over[k].dir_lba = root + s;
+                    s_over[k].dir_off = off;
+                    logf_("disc: %s replaced (%u bytes)", s_over[k].name, s_over[k].size);
+                }
+            }
+            off += rlen;
+        }
+    }
+}
+
+static void put32_both(uint8_t *p, uint32_t v) {  /* ISO9660: little- then big-endian */
+    p[0] = v; p[1] = v >> 8; p[2] = v >> 16; p[3] = v >> 24;
+    p[4] = v >> 24; p[5] = v >> 16; p[6] = v >> 8; p[7] = v;
+}
+
 /* GD-ROM LBAs are offset by 150 relative to the GDI's (FAD = LBA + 150). */
 int gdi_read_sector(uint32_t fad, uint8_t *out) {
     uint32_t lba = fad - 150;
+    if (s_nover) {
+        if (!s_over_ready) find_records();
+        for (int k = 0; k < s_nover; k++) {
+            Override *o = &s_over[k];
+            if (o->dir_lba && lba >= o->lba && lba < o->lba + o->sectors) {
+                memset(out, 0, 2048);
+                fseek64(o->f, (int64_t)(lba - o->lba) * 2048, SEEK_SET);
+                fread(out, 1, 2048, o->f);
+                return 1;
+            }
+        }
+        int r = read_real(lba, out);
+        for (int k = 0; k < s_nover; k++)
+            if (s_over[k].dir_lba == lba) {
+                put32_both(out + s_over[k].dir_off + 2, s_over[k].lba);
+                put32_both(out + s_over[k].dir_off + 10, s_over[k].size);
+            }
+        return r;
+    }
+    return read_real(lba, out);
+}
+
+static int read_real(uint32_t lba, uint8_t *out) {
     memset(out, 0, 2048);
     for (int i = s_ntracks - 1; i >= 0; i--) {
         Track *t = &s_tracks[i];

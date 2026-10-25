@@ -115,7 +115,9 @@ def _compile_all(zig, jobs, progress, label, platform=HOST, log=None):
 def runtime_sources():
     cm = open(os.path.join(ROOT, "CMakeLists.txt")).read()
     block = cm[cm.index("set(RUNTIME_SRC"):cm.index("if(RENDERER")]
-    return re.findall(r"runtime/\w+\.c", block) + ["runtime/vk_renderer.c", "runtime/pvr_tex.c"]
+    # psp_none.c: empty PSP-character tables, taken from the library only when
+    # the game has no PSP characters built in (their generated tables win)
+    return re.findall(r"runtime/\w+\.c", block) + ["runtime/vk_renderer.c", "runtime/pvr_tex.c", "runtime/psp_none.c"]
 
 
 def build_runtime(out_lib, gen_inc_dirs, sdl_include, vulkan_include, zig=None, extra_cflags=(), progress=None,
