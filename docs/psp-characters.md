@@ -550,6 +550,38 @@ pose choice: Ingrid's then skipped setting her win's countdown, PSP +0x33C,
 and the round never ended). `psp_call_dc` returns it as the PSP's, 0-255.
 The other calls whose results the PSP code uses return words.
 
+### Switch tables
+
+`.rodata` (`0x1F8FF0`-`0x1FEDE0`) has no relocations, so its jump tables
+hold raw code addresses and aren't in the data relocations the recompiler
+used to read a table's entries by: six switches in the new characters' code
+(tables `0x1FD7B0`-`0x1FDD20`, Eagle's and Maki's CPU code among them) were
+compiled as calls through the table, which has no Dreamcast counterpart (the
+CPU Eagle crashed). `mipsgen.Function.jump_table` now takes a `.rodata`
+table's entry count from the switch's bounds check (`sltiu t, index, n`).
+
+### The CPU
+
+The CPU plays a character by a script (dreamcast.md, CPU players). The
+PSP's interpreter (`0x74A20`, table `0x21E598`) has one command more than
+the Dreamcast's (81, 80), inserted as 40: a random branch, taken when
+(random & 31) <= its operand, then as the other conditions do (the routine
+named next, or skip to the block's `7601`/`7602`; `0x7610C` and `0x75C8C`
+are the Dreamcast's `8C058CE2` and `8C058AB2` paths). Its 41-80 are the
+Dreamcast's 40-79 (Dreamcast 75 and 76 share a handler, as PSP 76 and 77
+do; PSP 41 is the Dreamcast's 40 instruction for instruction). The new
+characters' scripts are in the PSP's numbering, so `hle_ai_step` (on
+`f_8C058516`) translates for a fighter whose character is `0x26` or more:
+41-80 run the Dreamcast's 40-79, and 40 runs command 38 (no operands, takes
+the branch when fighter +0xEB isn't 0) with +0xEB set from the game's random
+byte for the call. Before, the scripts ran the next command up from 40 on
+(Eagle's and Maki's use 37 and 40) and Ingrid's lost its place and crashed.
+The PSP's CPU code has no counterpart in the function map; the routine
+runner `0x732C0` is `8C057520` (manual map).
+
+build/test/cpu_fight.sh <hex char> <name>: arcade as Ryu with player 2 (the
+CPU) forced to the character (`SFA3_FORCE_CHAR=1:`), 40 s of the fight.
+
 ### Function map fixes
 
 The alignment (`align.py`) had paired `0x67B1C` with the animation stepper

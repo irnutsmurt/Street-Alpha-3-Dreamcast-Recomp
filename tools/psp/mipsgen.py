@@ -23,6 +23,7 @@ REL_TEXT = (0x2D5C18, 0x7B9F0)
 REL_DATA = (0x353CD0, 0x31E00)
 R_MIPS_32, R_MIPS_26, R_MIPS_HI16, R_MIPS_LO16 = 2, 4, 5, 6
 TEXT_END = 0x1F8354
+RODATA, DATA = 0x1F8FF0, 0x1FEDE0   # .rodata (no relocations in it) and .data
 
 
 class Boot:
@@ -100,8 +101,30 @@ class Function:
                     if not 0 < v < TEXT_END:
                         break
                     entries.append(v)
+                if not entries and RODATA <= table < DATA:
+                    # .rodata isn't relocated: its tables hold the raw addresses. The
+                    # count is the switch's bounds check (sltiu t, index, n) before it
+                    n = self.switch_bound(p)
+                    for k in range(n or 0):
+                        v = b.u32(table + 4 * k)
+                        if not (0 < v < TEXT_END and v % 4 == 0):
+                            entries = []
+                            break
+                        entries.append(v)
                 return p, table, entries
             if i.has_delay_slot:
+                break
+        return None
+
+    def switch_bound(self, lw):
+        """the case count of a switch whose table load is at lw: the n of the
+        `sltiu t, index, n` (then a branch on t) a few instructions before"""
+        b = self.boot
+        for q in range(lw - 4, lw - 40, -4):
+            j = b.insn(q)
+            if j.name == "sltiu" and 0 < j.imm < 512:
+                return j.imm
+            if j.name in ("jr", "j", "jal", "jalr"):
                 break
         return None
 

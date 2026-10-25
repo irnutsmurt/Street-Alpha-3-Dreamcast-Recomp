@@ -226,6 +226,52 @@ static void run(unsigned index, unsigned slot) {
     s_slot = saved;
 }
 
+/* f_8C058516 runs a CPU script's next command: 8C0B9EBC[command] (80 of them), the script past it
+ * in r5. The PSP's interpreter (0x74A20, table 0x21E598) has one more, inserted as 40: a random
+ * branch, (random & 31) <= its operand, then as the conditions do (the routine named next, or skip
+ * to the block's 7601/7602); its 41-80 are the Dreamcast's 40-79. The PSP characters' scripts are
+ * in the PSP's numbering: translated here. The branch runs through command 38 (no operands: fighter
+ * +0xEB != 0 takes the branch), +0xEB set for the call */
+#define PSP_AI_BRANCH 40u
+#define DC_AI_COMMANDS 0x8C0B9EBCu
+#define DC_AI_FIELD_TEST 38u
+#define DC_RANDOM 0x8C0246A4u
+void f_8C058516_orig(void);
+void f_8C0246A4(void);
+
+void hle_ai_step(void) {
+    uint32_t f = g.r[4], script = g.r[5], cmd = R16(script);
+    uint32_t fighter = (f - 0x8C17FD38u) / 0x44Cu;
+    {  /* SFA3_AI_LOG=1: each CPU script command (debug) */
+        static int log = -1, n;
+        if (log < 0) log = getenv("SFA3_AI_LOG") != NULL;
+        if (log && n++ < 20000)
+            logf_("ai %u %08X: %u %04X %04X (frame %llu)", fighter, script, cmd, R16(script + 2), R16(script + 4),
+                  (unsigned long long)g_vblank_count);
+    }
+    if (fighter >= 3 || R8(f + 0x132) < 0x26 || cmd < PSP_AI_BRANCH) { f_8C058516_orig(); return; }
+    if (cmd > 80) fatal("psp: CPU script command %u at %08X", cmd, script);
+    W8(f + 0x1D5, R8(f + 0x1D5) + 1);  /* as the interpreter does */
+    if (cmd > PSP_AI_BRANCH) {
+        W16(f + 0x1CA, cmd - 1);
+        g.r[4] = f;
+        g.r[5] = script + 2;
+        call_indirect(R32(DC_AI_COMMANDS + 4 * (cmd - 1)), 0x8C058532u);
+        return;
+    }
+    W16(f + 0x1CA, DC_AI_FIELD_TEST);
+    f_8C0246A4();
+    uint32_t take = (g.r[0] & 31) <= R16(script + 2);
+    uint32_t field = R8(f + 0xEB);
+    W8(f + 0xEB, take);
+    g.r[4] = f;
+    g.r[5] = script + 4;
+    call_indirect(R32(DC_AI_COMMANDS + 4 * DC_AI_FIELD_TEST), 0x8C058532u);
+    uint32_t r0 = g.r[0];
+    W8(f + 0xEB, field);
+    g.r[0] = r0;
+}
+
 /* a stub: FFFF 5053 <index> FFFF in a character file */
 static int stub_index(uint32_t addr) {
     uint32_t off = addr & 0xFFFFFFu;

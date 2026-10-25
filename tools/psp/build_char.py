@@ -36,6 +36,9 @@ HELPER_LIB = (0xCE000, 0xD1000)      # code only the PSP-only characters use
 BUILDER = 0x6AB48                    # builds descriptor words 0-11 / 32-34 at load: done here instead
 BUILDERS = {BUILDER, 0x1BF93C}       # and Yun's own builder: no-ops at run time (run_entry did their work)
 LAST_CODE_END = 0x1CB124             # Ingrid's code ends here (a PSP-only module follows)
+# engine code the Dreamcast's engine runs for these characters (runtime/psp.c): none so far (the
+# CPU script command the PSP added is run through the Dreamcast's: hle_ai_step)
+ENGINE_ROOTS = ()
 LAST_DATA_END = 0x2B2310             # and her data (the module's tables follow)
 BSS, BSS_END = 0x2D4FC0, 0x2D4FC0 + 0xA4D454
 EXT_PSP_VARS, EXT_PSP_VARS_END = chartables.EXT_END, 0x98F00000  # PSP-only variables (extension RAM, zeroed at boot)
@@ -251,6 +254,7 @@ class Build:
             todo += [a for a in c.code_refs() if 0x1000 <= a < TEXT_END]
             lo, hi = c.own
             data += [(self.boot.u32(a), 0) for a in range(lo, hi, 4) if a in self.boot.data_ptrs]
+        todo += list(ENGINE_ROOTS)
         taken = set(todo)
         engine_recompiled = set()
         seen = set()
