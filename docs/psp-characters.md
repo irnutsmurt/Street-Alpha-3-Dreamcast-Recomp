@@ -26,10 +26,17 @@ Status (2026-10-25):
   HUD's face and name), the win screen (their portrait and quotes:
   `WINnn.PAC`), the wipe and the next stage. Checked through the second
   fight with each of the four (build/test/arc_full.sh).
+- The CPU plays them (The CPU, below): checked as player 2 in arcade
+  against Ryu for each (build/test/cpu_fight.sh).
+- Versus mode's select screen has the PSP's seventh row (Versus mode's
+  select screen, below); Training, Team Battle, Survival, Dramatic Battle
+  and VS Dramatic use the same screen.
+- World Tour: picking one goes through the map, the VS screen and the fight
+  (World Tour, below). Checked with Yun to the first fight.
 - Not yet: endings, the ranking's portraits, the PSP-only command checker Yun
   uses for command 0x20 (recompiled, but its button-configuration state is
   PSP-only and starts zeroed), Ingrid's background-scroll variables
-  (PSP-only), the CPU playing them, versus mode's select screen.
+  (PSP-only).
 
 ## The PSP program (`BOOT.BIN`)
 
@@ -580,10 +587,33 @@ rows, keeping the two random cells in row 4:
 - `8C0BE45A` (a character's face part) moved, with the new faces.
 
 Constants in the code: `chartables.IMMEDIATES` lists instructions (`mov
-#imm`, `add #imm`, `cmp/eq #imm`, `mov.w @(disp,PC)`) whose value the
+#imm`, `add #imm`, `cmp/eq #imm`, `mov.w @(disp,PC)`, `mov.l @(disp,PC)`)
+whose value the
 recompiled code reads from `EXT_IMM` (`98DFF000`) + 4 x index; the runtime
 writes the instructions' own values there at boot (`char_tables_init`, the
 recompiler's `g_imm_defaults`), and the add-on's patches change some.
+
+### World Tour
+
+World Tour's screens (the map, the setup and level-up screens) show the
+character's banner: `f_8C0366D0` draws three bank `0x1D` parts from
+`8C0AB7D0`[character] (a halfword table, 38 entries; the PSP's is
+`0x2C89C0`, 42). Bank `0x1D` is `WORLD.PAC`: file `0x106`, loaded by
+`f_8C01C508` (on the map) and `f_8C01C5E8` (the other screens) into three
+buffers they allocate: `0x4000` bytes for the parts (section 4), `0x30000`
+for the tiles (section 5), `0x400` for the palettes (section 6). The
+Dreamcast's has 345 parts; the new characters read past the table (Yun: part
+`0x176`, which doesn't exist), the tile decompressor ran on garbage and
+overwrote memory: a crash right after picking one.
+
+`worldtour.py` adds each new character's three parts from the PSP's
+`world_u.pac` (bases `0x173`, `0x176`, `0x179`, `0x17C`) to `WORLD.PAC` as
+`0x159`-`0x164`, with their tiles and records, and patches the moved
+`8C0AB7D0`. The tiles section grows past `0x30000` (to `0x31000`, rounded
+to 4 KB), so the two loaders' allocation sizes (`mov.l` literals at
+`8C01C520` and `8C01C600`) are among the code's constants (Versus mode's
+select screen, above). The add-on installs its `WORLD.PAC` in place of the
+disc's (`build/psp_out/WORLD.PAC`).
 
 ### The CPU
 
@@ -700,10 +730,8 @@ her effect objects add small offsets to her base (`p_1C7974`).
 
 ## Gaps
 
-- The VS screen's and the HUD's portraits and names, win screens and quotes
-  (`win`, `bd`), endings (`end`), the ranking's portraits (`rk`), the move
-  list texture (`0x10000E00`), versus mode's select screen, CPU behaviour,
-  stages and music.
+- Endings (`end`), the ranking's portraits (`rk`), the move list texture
+  (`0x10000E00`), the PSP's stages and music.
 - The rest of the character tables (Character tables, above).
 - A ranking entry or saved data naming a PSP character would read past the
   Dreamcast's tables without the add-on.
@@ -726,7 +754,7 @@ her effect objects add small offsets to her base (`p_1C7974`).
 | `SFA3_WATCH_FROM=frame` | start watching or tracing at that frame |
 | `SFA3_DMA_LOG=1` | log DMA |
 | `SFA3_PAC_LOG=1` | log each archive section as it loads (tag, size, where to) |
-| `SFA3_SPRITE_LOG=frame` | log that frame's sprite draws: object, bank, part, record, position, animation, caller |
+| `SFA3_SPRITE_LOG=frame` | log that frame's sprite draws: object, bank, part, record, position, animation, caller (`frame+`: from that frame on, 400 lines at most) |
 | control `rtdump <file>` | the read trace (read-trace build only) |
 | control `poke <hex address> <decimal value>` | write a guest byte |
 | control `untilnz <hex address> [frames [button]]` | hold the queue until the guest u16 there isn't 0 (at most frames, default 6000), tapping player 1's button every 40 frames meanwhile |

@@ -477,6 +477,20 @@ boxes moved after them), parts 0x33-0x36; big portraits bank 8 parts
 150 more, so its later indices are shifted: `0x6A1` for the Dreamcast's
 `0x60B`).
 
+## World Tour
+
+- `WORLD.PAC` (file `0x106`) is bank `0x1D`: the map's and the setup
+  screens' sprites. `f_8C01C508` (the map) and `f_8C01C5E8` (the other
+  screens) allocate its buffers and load it: `0x4000` bytes for the parts
+  (section 4, 345 parts), `0x30000` for the tiles (section 5), `0x400` for
+  the palettes (section 6); the sizes are `mov.l` literals (at `8C01C520`
+  and `8C01C600` for the tiles).
+- `f_8C0366D0` draws the character's banner (name and portrait): three
+  parts from `8C0AB7D0`[character] (u16, 38 entries).
+- The entries (characters saved from World Tour) are at `8C188D48`
+  (2 x `0x354`); the versus select screen shows them in its last row
+  (Select screens).
+
 ## Main loop and rendering
 
 `f_8C010424` main loop; tasks `f_8C0259C8` / `f_8C025A90`; the fight's
