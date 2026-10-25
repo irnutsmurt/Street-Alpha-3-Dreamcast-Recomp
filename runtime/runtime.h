@@ -75,3 +75,11 @@ void det_pace_shift(uint64_t ns);
 /* In-place machine reset at the end of the current vblank: the game boots
  * again from power-on, deterministic (netplay) or real time. */
 void machine_reset_request(int det);
+
+/* Extension memory: host memory the game can reach at 0x98000000 (the SH-4's
+ * area 6, unused on a Dreamcast), for data a PSP character has more of than
+ * the Dreamcast's 16 MB holds room for (psp_load.c). Not saved in states. */
+#define EXT_RAM_PHYS 0x18000000u
+#define EXT_RAM_BASE 0x98000000u
+#define EXT_RAM_SIZE (16u << 20)
+extern uint8_t *g_ext_ram;

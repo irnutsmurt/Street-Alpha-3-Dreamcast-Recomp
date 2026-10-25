@@ -134,6 +134,24 @@ class Character:
                 return p
         raise SystemExit(f"character {self.cid:02X}: no entry function found")
 
+    def builder_table(self):
+        """the index bytes the entry function hands the PSP's table builder (its a2)"""
+        b, f = self.boot, Function(self.boot, self.entry)
+        his, regs = {}, {}
+        for a in f.addrs:
+            i = b.insn(a)
+            rel = b.text_rel.get(a)
+            if rel == R_MIPS_HI16:
+                his[i.rt] = i.imm << 16
+            elif rel == R_MIPS_LO16 and i.rs in his:
+                regs[i.rt] = (his[i.rs] + i.imm) & 0xFFFFFFFF
+            if i.name == "jal" and i.target == BUILDER:
+                d = b.insn(a + 4)  # the delay slot may set a2 too
+                if b.text_rel.get(a + 4) == R_MIPS_LO16 and d.rs in his:
+                    regs[d.rt] = (his[d.rs] + d.imm) & 0xFFFFFFFF
+                return regs[6]
+        raise SystemExit(f"character {self.cid:02X}: the entry function doesn't call the table builder")
+
     def function_pointers(self):
         """code addresses in the character's own data"""
         b, lo, hi = self.boot, *self.own
@@ -334,6 +352,46 @@ def build_d(sec, index_bytes):
     return d
 
 
+FIGHTER, DBLOCK, POOL, STACK = 0x0B000000, 0x0A000000, 0x0C000000, 0x0F000000
+
+
+def run_entry(b, c, sec11):
+    """run the character's entry function (MIPS, interpreted) against scratch
+    memory, and read back the descriptor block it leaves: D offset -> value,
+    ('A', off) into section 0x11's data, ('D', off) into the block itself,
+    ('P', address) PSP data (a pointer the file's relocation turns into ours)"""
+    from mipsemu import Cpu, Memory
+    mem = Memory(b.boot)
+    fighter = bytearray(0x600)
+    struct.pack_into("<I", fighter, 0x1A0, DBLOCK)
+    dblock = bytearray(D_SIZE + 0x400)
+    struct.pack_into("<II", dblock, 0xC0, POOL, POOL + 0x208)  # where the PSP keeps section 0x11
+    mem.add(FIGHTER, fighter)
+    mem.add(DBLOCK, dblock)
+    mem.add(POOL, sec11)
+    mem.add(STACK - 0x10000, bytearray(0x11000))
+    lo, hi = c.code
+
+    def allow(t):  # the character's own code and the PSP's table builder
+        return lo <= t < hi or t in (BUILDER, 0x6A638)
+    cpu = Cpu(mem, allow)
+    cpu.call(c.entry, (FIGHTER, 0, 0, 0))
+    d = {}
+    for off in range(0, len(dblock) - 3, 4):
+        v = struct.unpack_from("<I", dblock, off)[0]
+        if off in (0xC0, 0xC4) or not any(DBLOCK + off + k in mem.writes for k in range(4)):
+            continue
+        if POOL + 0x208 <= v < POOL + len(sec11):
+            d[off] = ("A", v - POOL - 0x208)
+        elif DBLOCK <= v < DBLOCK + len(dblock):
+            d[off] = ("D", v - DBLOCK)
+        elif v == 0:
+            d[off] = ("Z", 0)
+        else:
+            d[off] = ("P", v)
+    return d
+
+
 # ---------------- writing ----------------
 
 def stub(index):
@@ -348,8 +406,7 @@ class Writer:
         lo, hi = c.own
         self.sec_off = (self.own_off + (hi - lo) + 15) & ~15
         self.d_off = (self.sec_off + len(sec11) - 0x208 + 15) & ~15
-        index_bytes = b.boot.data[c.desc + DESC_WORDS * 4 + 0x74:c.desc + DESC_WORDS * 4 + 0x74 + 24]
-        self.d = build_d(sec11, index_bytes)
+        self.d = run_entry(b, c, sec11)
         self.size = self.d_off + max(D_SIZE, max(self.d) + 4)
         self.text, self.text_off = None, self.size
         if text is not None:
@@ -399,7 +456,13 @@ class Writer:
     def dval(self, v, slot):
         base = SLOT_BASE + slot * SLOT_SIZE
         kind, off = v
-        return base + (self.sec_off + off if kind == "A" else self.d_off + off)
+        if kind == "A":
+            return base + self.sec_off + off
+        if kind == "D":
+            return base + self.d_off + off
+        if kind == "Z":
+            return 0
+        return self.xa(off, slot)  # PSP data: the descriptor's own words
 
     def file(self, slot):
         b, c = self.b, self.c

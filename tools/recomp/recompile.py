@@ -5,6 +5,7 @@ Outputs into <out_dir>:
   code_NNN.c       recompiled functions (chunked for parallel compilation)
   dispatch.c       guest address -> host function table
 """
+import json
 import os
 import struct
 
@@ -45,9 +46,11 @@ HOOKS = {
     0x8C02D3E0: "hle_network_init",
     0x8C02D4C0: "hle_network_logic",
     0x8C06273C: "hle_mode_menu_input",  # Mode Menu input: start a mode directly (lobby, autopilot)
+    0x8C01348E: "hle_pac_section",
+    0x8C012C80: "hle_open_file",  # opening a file by name (logged with SFA3_FILE_LOG)  # a character archive's next section: big sprite tiles to extension memory
 }
 # Hooked functions whose original body is still emitted, as <name>_orig.
-KEEP_ORIGINAL = {0x8C07AF3C, 0x8C07D988, 0x8C0625E0, 0x8C02EB8C, 0x8C02EE26, 0x8C07B7B4, 0x8C07D2E0, 0x8C07CD5A, 0x8C07CE14, 0x8C094510, 0x8C0100BC, 0x8C07BC42, 0x8C07E17C, 0x8C06273C}
+KEEP_ORIGINAL = {0x8C012C80, 0x8C01348E, 0x8C07AF3C, 0x8C07D988, 0x8C0625E0, 0x8C02EB8C, 0x8C02EE26, 0x8C07B7B4, 0x8C07D2E0, 0x8C07CD5A, 0x8C07CE14, 0x8C094510, 0x8C0100BC, 0x8C07BC42, 0x8C07E17C, 0x8C06273C}
 
 
 def extra_entries():
@@ -98,6 +101,13 @@ def run(disc_dir, out_dir, report=None, progress=None):
     report = report or (lambda m: print("      " + m))
     progress = progress or (lambda d, t: None)
     os.makedirs(out_dir, exist_ok=True)
+    # PSP characters (tools/psp/build_char.py) move some tables: their literals follow
+    import codegen
+    reloc = os.path.join(out_dir, "relocate.json")
+    codegen.RELOCATE[:] = [tuple(int(x, 16) for x in r[:3]) for r in json.load(open(reloc))] \
+        if os.path.exists(reloc) else []
+    if codegen.RELOCATE:
+        report(f"{len(codegen.RELOCATE)} tables moved for the PSP characters")
     data = open(os.path.join(disc_dir, "1ST_READ.BIN"), "rb").read()
     img = Image(data, MAIN_BASE)
 

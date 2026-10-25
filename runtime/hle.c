@@ -295,6 +295,18 @@ void hle_init(const char *gdi_path) {
         fatal("cannot open disc image %s (moved or deleted? Open the setup app and convert again from your disc image)",
               gdi_path);
     /* testing: SFA3_REPLACE=NAME=path[;NAME=path...] reads those disc files from elsewhere */
+    const char *add = getenv("SFA3_ADD");  /* testing: SFA3_ADD=NAME=path[;...] adds files to the disc */
+    if (add) {
+        char buf[4096];
+        snprintf(buf, sizeof buf, "%s", add);
+        for (char *item = strtok(buf, ";"); item; item = strtok(NULL, ";")) {
+            char *eq = strchr(item, '=');
+            if (eq) {
+                *eq = 0;
+                gdi_add_file(item, eq + 1);
+            }
+        }
+    }
     const char *rep = getenv("SFA3_REPLACE");
     if (rep) {
         char buf[4096];

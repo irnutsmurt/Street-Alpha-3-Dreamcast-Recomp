@@ -12,6 +12,7 @@
 
 uint8_t *g_ram;
 uint8_t *g_vram;
+uint8_t *g_ext_ram;
 uint8_t *g_aica_ram;
 
 extern uint32_t g_intevt;
@@ -273,6 +274,11 @@ static uint32_t rd(uint32_t a, int size) {
         return p4_read(a);
     }
     uint32_t p = a & 0x1FFFFFFF;
+    if (p - EXT_RAM_PHYS < EXT_RAM_SIZE) {  /* the port's extension memory (see runtime.h) */
+        uint32_t v = 0;
+        memcpy(&v, g_ext_ram + (p - EXT_RAM_PHYS), (size_t)size);
+        return v;
+    }
     if (p >= 0x1F000000) return p4_read(p);
     if (p >= 0x005F0000 && p < 0x00600000) return holly_read(p);
     if (p >= 0x00700000 && p < 0x00710000) return aica_reg_read(p & 0xFFFF, size);
@@ -306,6 +312,7 @@ static void wr(uint32_t a, uint32_t v, int size) {
         return;
     }
     uint32_t p = a & 0x1FFFFFFF;
+    if (p - EXT_RAM_PHYS < EXT_RAM_SIZE) { memcpy(g_ext_ram + (p - EXT_RAM_PHYS), &v, (size_t)size); return; }
     if (p >= 0x1F000000) { p4_write(p, v); return; }
     if (p >= 0x005F0000 && p < 0x00600000) { holly_write(p, v); return; }
     if (p >= 0x00700000 && p < 0x00710000) { aica_reg_write(p & 0xFFFF, v, size); return; }
@@ -362,6 +369,7 @@ void mmio_reset(void) {
 void mmio_init(void) {
     g_ram = calloc(1, 16 << 20);
     g_vram = calloc(1, 8 << 20);
+    if (!g_ext_ram) g_ext_ram = calloc(1, EXT_RAM_SIZE);
     g_aica_ram = calloc(1, 2 << 20);
     mmio_reset();
 }

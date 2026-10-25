@@ -173,6 +173,9 @@ void psp_call_dc(uint32_t addr) {
         trace = t != NULL;
         trace_addr = t ? (uint32_t)strtoul(t, NULL, 16) : 0;
     }
+    static int mute = -1;  /* SFA3_PSP_MUTE: skip the PSP characters' sound calls (testing, debug) */
+    if (mute < 0) mute = getenv("SFA3_PSP_MUTE") != NULL;
+    if (mute && addr == 0x8C059F2Cu) { m.r[2] = 0; return; }
     for (int i = 4; i < 8; i++) g.r[i] = m.r[i];
     /* EABI passes arguments 5-8 in t0-t3; the SH-4 takes them on the stack */
     g.r[15] -= 16;
