@@ -200,6 +200,20 @@ void call_indirect(uint32_t addr, uint32_t from) {
         for (int i = 0; i < 32; i++) k += snprintf(hex + k, sizeof hex - k, "%02X", R8(addr + i));
         logf_("bytes at %08X: %s", addr, hex);
     }
+    logf_("registers: r4 %08X r5 %08X r6 %08X r7 %08X r14 %08X", g.r[4], g.r[5], g.r[6], g.r[7], g.r[14]);
+    {
+        char buf[200];
+        int n = 0;
+        for (unsigned i = 0; i < 16; i++)
+            n += snprintf(buf + n, sizeof buf - (size_t)n, " %08X", g_stats.last_indirect[(g_stats.last_idx + i) & 15]);
+        logf_("recent indirect calls:%s", buf);
+    }
+    if (is_ram(g.r[4])) {
+        char hex[200];
+        int k = 0;
+        for (int i = 0; i < 48; i++) k += snprintf(hex + k, sizeof hex - k, "%02X", R8(g.r[4] + (uint32_t)i));
+        logf_("bytes at r4: %s", hex);
+    }
     fatal("call to unrecompiled address %08X from %08X (pr=%08X)", addr, from, g.pr);
 }
 

@@ -8,6 +8,7 @@
 #define OVERLAY_END   0x83C000u  /* three 0x14000-byte player slots */
 
 _Noreturn void fatal(const char *fmt, ...);
+void log_backtrace(const char *why);  /* the host call stack's recompiled functions (debug) */
 void logf_(const char *fmt, ...);
 extern int g_trace;
 

@@ -47,7 +47,7 @@ comes in overlays (`PLnnA/B/C.BIN`, one per player slot) at `0x8C800000`,
 | `8C1A2128` | per-player sound bank pointers |
 | `8C1A2144` / `2150` / `215C` | sprite parts / tiles / palettes per player slot (pointers) |
 | `8C1A2170` | character data area: where the next section goes (offset from `8C347300`) |
-| `8C1A2174` | palette RAM copy (the game uploads it to the PowerVR) |
+| `8C1A2174` | palettes in use: 64 slots of 16 colours (`f_8C015AF6` copies into them); `8C1A2974` = changed |
 | `8C1A3F9C` | sound command queue: 8-byte entries; head `8C1A419C`, tail `8C1A419D` (bytes) |
 | `8C1A3730` / `8C1A3734` | file loader state; 120-byte load records |
 | `8C2F5300` | disc read buffer |
@@ -151,7 +151,7 @@ descriptor (39 words) to `*(fighter + 0x180)`.
 |---|---|
 | 0-3 | normal moves per button: tables of pointers to animation records |
 | 4, 6, 8, 10, 11 | data tables |
-| 5, 7, 9 | tables of pointers (7: per -ism, read at +4 + ism x 4) |
+| 5, 7, 9 | tables of pointers (7: per -ism, read at +4 + ism x 4; 9: by the opponent's character, 38 lists of where a held opponent goes frame by frame: `f_8C05206E`, `f_8C0520F0`, `f_8C052180`, `f_8C052268`) |
 | 12-15 | data tables (pointer tables) |
 | 16-27 | code: 18 the per-frame state dispatcher, 19 the round intro, 20 the command check (special moves) |
 | 28, 29 | (number, code) lists; 29 (+0x74) patches the engine's jump table `8C0A9278` |
@@ -232,6 +232,18 @@ the camera's. It queues a command (`f_8C014094`) on `8C1A3F9C`; the main
 loop's `f_8C01424C` sends them to the sound CPU and waits on some (an entry
 reads `FFFF` when done).
 
+## File names
+
+`8C09895C`: 271 pointers to file names. `f_8C0126F4(number)` opens
+names[number] (most loads); `f_8C012C80(name, ...)` opens by name. A
+character's files come in families: `pl` archive (13 + character), `st`
+stages (51-88, by stage: `8C09ABE8`, 42 bytes), `rk` ranking portraits
+(90 + position, `f_8C01C8D0`), `op` prologue (126 + position,
+`f_8C01B904`), `win` (162-194 and 267-270, table `8C09B08E`), `bd` win
+portraits (195-227, `8C09B116`), `end` endings (228-260, `8C09AC12`: u16, 0
+for none). Position: the character number, but `0x13` -> `0x11`, `0x25` ->
+`0x15`, and one less above `0x12`.
+
 ## Disc and file system
 
 The disc's high-density area starts at LBA 45000 (FAD = LBA + 150). ISO 9660:
@@ -253,6 +265,107 @@ path table, not only the volume descriptor.
   `f_8C013BFC`, the DISC LOAD ERROR path), 1 `f_8C0133D8`, 2 `f_8C01348E`
   (a section), 3 `f_8C01380C`, 4 `f_8C0139DC`, 5 `f_8C013A38`, 6
   `f_8C013AD0`. `f_8C013260` runs them.
+
+## Select screens
+
+Both select screens are drawn from `SELECT.PAC` (loaded at boot): sprite bank
+8 (sections `01000008` parts, `02000008` tiles, `04000008` palettes) and
+bank B (`0100000B`, `0200000B`; no palettes of its own). Its sections land
+in a fixed RAM area with little room between them (bank 8 tiles
+`8CAF4800`, palettes `8CB94C00`, parts `8CBA1C00`; bank B tiles
+`8CBB4800`, parts `8CBFC800`).
+
+- Bank 8 tiles are 16x16 (128 bytes, 4 bits a pixel, twiddled); a part's
+  tiles go row by row. Bank B "tiles" are 32x32: tile n is the four 16x16
+  tiles 4n-4n+3 (each compressed on its own, in order top-left,
+  bottom-left, top-right, bottom-right).
+- Palettes: `f_8C069D64(index, slot, count)` copies bank 8 palettes
+  (`*(8C1A20A8)` + index x 32) into the slots. Big portraits use index
+  `0x4C0` + character x 6 + colour (`f_8C06BA42`/`BA72`/`BA92`; characters
+  0x14 and 0x1C load an extra one, `0x5A4`/`0x5A5`).
+- Parts are streamed into per-object textures on first use (`f_8C01A314`)
+  and cached by part record (`f_8C01A282`): two objects drawing the same
+  record share the first one's texture, even from different tile banks.
+
+Arcade "SELECT PLAYER" screen:
+
+| | |
+|---|---|
+| cursor grid | `8C0BE3CC`: 7 x 7 bytes, a character per cell; `0x80` ENTRY, `0x40`+ random, `FF` empty |
+| faces | a composition (list of 6-byte records: s16 x, s16 y, u16 part; `0x4000` skip, `0x8000` last) at `8C0BF610`, bank B, 24-pixel grid centred on the object; part = face (mostly the character number; 0x15, 0x2A-0x2E others) |
+| cell frames | the next list (`8C0BF716`): part 0x27 under each cell |
+| ENTRY boxes | another object, bank B parts 0x33-0x38 drawn with bank 8's tiles |
+| big portrait | animation per character `8C0C03B4` (8-byte records: duration, flags, -, -, u16 part, u16; flags 0x80 = jump back), bank 8 parts 0x322+ (Ryu) |
+| name | `8C0C1194` (bank 8 part per character), scrolling banner `8C0C142C` / `8C0C1478` |
+| name strip | down the side for each player: `f_8C06B488(select object, player)` writes the 15 records of `8C0BF1F4` + 90 x side (alternating the side's tag, bank 8 part `0x16D`/`0x16E`, and the name) from `8C0C11F4[character]`: u16 spacing (`0x8000`: the name 8 up), u16 bank 8 part. A part count past the 15 records ran its second loop through 64K records (writing `FF00` from there on) |
+| state | the select objects' handlers by state (obj +3): `8C0C10E4`, 7 of them (`f_8C06ABC8`) |
+
+After the pick: mode (NORMAL, MAZI, SAIKYO, CLASSIC), -ism, speed, then
+the world map (below).
+
+Versus screen: cursor `f_8C070648`, grid `8C0C1D84` (7 x 6, the sixth row
+filled by `f_8C06EFAC` with secret characters in some modes).
+
+Objects pick an animation by kind and character: `8C0BED8C` holds a pointer
+per kind (30) to one of two groups of 8-byte records, and the record is
+group + 8 x character: `8C0BEB3C` (bank B: the VS screen's portraits, e.g.
+Ryu `0x3A`, Dan `0x66`) and `8C0BEC64` (bank 8, from `0x28F`). A record
+names a part; the part's record (byte 10 set) says the next part is drawn
+with it, so a portrait is a chain (Ryu's four parts `0x3A`-`0x3D`). The
+groups have no room after their 38 records (the second ends where the
+pointer table starts).
+
+## Arcade mode
+
+- Route: `f_8C02BD08` copies 8 opponents from `8C0A8248[character]` (16
+  routes of 8, by game state +0x21 & 15) to `8C189400`, then the rival
+  `8C0A7176[character]` and the boss `8C0A719E[character]`; 10 bytes of
+  `8C0A82E0` (by game state +0x22) then mark places whose Chun-Li (4) or
+  Sodom (6) become `0x12`/`0x14`. Each route's 5th opponent is the
+  character's story rival (Ryu: Rose).
+- The character's stage: `8C0A8420` (`f_8C02CA78`); per-character flags
+  `8C0A8380`, `8C0A83A8`, `8C0A83D0`, `8C0A83F8` (`f_8C02C758` & co.).
+- World map: the prologue (`OPnn.PAC`, opened by `f_8C01B904`): portrait,
+  personal data, the story; a button turns the page. Then the map with the
+  route's ladder (names) and the next stage's place: `8C0C19C8`, (x, y) by
+  stage (`f_8C06D8CC`).
+- OP file: bank `0x15` (parts 0-3 and 11-14 the screen's frame; the
+  portrait from `8C0CF7D4[character]` to the last part), palettes (68 x 32
+  bytes), then the text: personal data (10 lines of 18 bytes) and the story
+  (4 blocks of 69 bytes, lines of text each starting with position bytes);
+  `0x10000A00` the story in Japanese (a 256x256 PVR texture).
+- `f_8C069DCC(fighter)` counts a game for the character and -ism: u16
+  counters at `8C09B20C` + 8 x character (the system data, saved; the
+  ranking follows at `8C09B33C`).
+
+The fight's HUD: `PITU.PAC` (file 5, loaded at boot by `f_8C01BFFA`):
+bank `0x10` (sprites: gauges, faces), bank 9 (parts whose tiles are the
+16x16 cells of the three 256x256 ARGB1555 textures `0x10000100`-`0x10000102`,
+tile n in texture n / 256: the names, digits, banners). `f_8C06443C(hud)`
+sets the parts each frame: faces `0x17D` + character (player 1) and `0x1A6`
++ character (player 2, mirrored), names `0xF6` / `0x121` +
+`8C0BE266`[character]. The HUD elements are structs with the part at +60
+(u16, `0x8000` hidden) and the bank at +54, drawn by `f_8C018BF2`.
+
+Where a file's sections go: per-bank destination tables in the program's
+data, parts `8C09AE80`, tiles `8C09AF10`, palettes `8C09AFA0` (a u32 per
+bank), copied into `8C1A1F48`/`8C1A1FE8`/`8C1A2088` as files load.
+
+Win screen (`WINnn.PAC`, the `win` table): sections `0x1`/`0x2`/`0x3` the
+portrait (parts, tiles, palettes), `0x0` the win quotes (each quote's lines
+one after another: position bytes and text, NUL-terminated), `0x40000000`
+the sound (`SOSB`). `BDnn.PAC` (`bd` table): the pre-fight dialogue's extra
+sprites (bank `0x1A`, not every character has them) and the dialogue in
+Japanese (texture `0x10000900`); the English dialogue is in the character
+file (descriptor word 38, entry 1: pointers to two-line records).
+
+The PSP (`select_u.pac`, same formats, tiles linear) adds: in the arcade
+grid Yun and Ingrid at the ends of row 5, Eagle and Maki in row 6 (where
+the Dreamcast has random cells); faces at bank B tiles 44-47 (the ENTRY
+boxes moved after them), parts 0x33-0x36; big portraits bank 8 parts
+`0x3D7`-`0x416`, palettes `0x4C0` + character x 6 (its palette section has
+150 more, so its later indices are shifted: `0x6A1` for the Dreamcast's
+`0x60B`).
 
 ## Main loop and rendering
 

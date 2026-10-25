@@ -224,6 +224,20 @@ void watch_hit(uint32_t a, uint32_t v, int size) {
     logf_("watch: write%d %08X = %X at frame %llu by%s", size * 8, a, v, (unsigned long long)g_vblank_count, buf);
 }
 
+/* the host call stack: recompiled functions are named after guest addresses
+ * (f_ Dreamcast, p_ PSP), so it doubles as the guest's (debug) */
+void log_backtrace(const char *why) {
+    void *frames[48];
+    int n = backtrace(frames, 48);
+    char **names = backtrace_symbols(frames, n);
+    for (int i = 1; i < n && names; i++) {
+        const char *f = strstr(names[i], "(f_");
+        if (!f) f = strstr(names[i], "(p_");
+        if (f) logf_("  %s: %.40s", why, f + 1);
+    }
+    free(names);
+}
+
 static void on_signal(int sig) {
     dump_state(sig == SIGTERM ? "SIGTERM" : "SIGINT");
     /* recompiled functions are named after guest addresses, so the host
@@ -253,6 +267,31 @@ void video_vblank(void) {
             id = e && strchr(e, ':') ? (int)strtol(strchr(e, ':') + 1, NULL, 16) : 0;
         }
         if (player >= 0 && player < 4) W8(0x8C17FD38u + 0x44Cu * (uint32_t)player + 0x132u, (uint32_t)id);
+    }
+    {  /* SFA3_POKE_EVERY=<hex address>:<value>,...: write those guest bytes every frame (testing) */
+        static int n = -1;
+        static uint32_t addr[8], val[8];
+        if (n < 0) {
+            n = 0;
+            for (const char *e = getenv("SFA3_POKE_EVERY"); e && *e && n < 8;) {
+                char *end;
+                addr[n] = (uint32_t)strtoul(e, &end, 16);
+                if (*end != ':') break;
+                val[n++] = (uint32_t)strtoul(end + 1, &end, 0);
+                e = *end == ',' ? end + 1 : end;
+            }
+        }
+        for (int i = 0; i < n; i++) W8(addr[i], val[i]);
+    }
+    {  /* SFA3_FORCE_HEALTH=<player>:<value>: keep a fighter's health at most that (testing: a hit wins a round) */
+        static int player = -2, value;
+        if (player == -2) {
+            const char *e = getenv("SFA3_FORCE_HEALTH");
+            player = e ? atoi(e) : -1;
+            value = e && strchr(e, ':') ? atoi(strchr(e, ':') + 1) : 1;
+        }
+        uint32_t health = 0x8C17FD38u + 0x44Cu * (uint32_t)player + 0x60u;
+        if (player >= 0 && player < 4 && (int16_t)R16(health) > value) W16(health, (uint32_t)value);
     }
     menu_tag(cheats_active() ? "CHEATS ON" : "");
     if (s_frames % 60 == 0) {

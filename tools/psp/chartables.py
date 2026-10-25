@@ -35,12 +35,32 @@ import struct
 import sys
 
 EXT = 0x98D00000         # the moved tables
-EXT_DATA = 0x98E00000    # records the PSP's new entries point at
-EXT_END = 0x98F00000     # (psp_load.c keeps the archive names from here)
+EXT_DATA = 0x98E00000    # records the PSP's new entries point at (patches())
+EXT_THROWS = 0x98E20000  # throw positions for the PSP characters as opponents (throws.py)
+EXT_NAMES = 0x98E30000   # the add-on's file names (file_patches())
+EXT_ROUTES = 0x98E31000  # arcade routes (arcade.py)
+EXT_SELECT = 0x98E40000  # the select screens' records (screens.py)
+EXT_END = 0x98E80000     # (build_char.py: the PSP-only variables from here)
 CHARS = 0x2A             # entries after the move: 0x00-0x29
 NEW = range(0x26, 0x2A)
 PSP_OFF = 0x74           # BOOT.BIN: file offset = address + 0x74
 MAIN = 0x8C010000
+
+
+# the file name table: names[] index -> name. A character's files are numbered
+# by family (pl 13 + n, rk 90 + n, op 126 + n; n the character number, one
+# less above 0x12), which for 0x26 and up runs into the next family; win, bd
+# and end go through tables. The add-on's names follow the Dreamcast's 271:
+# NAME_COUNT + 4 x family + (character - 0x26), the families in FAMILIES
+# order (runtime/psp_load.c has the same numbers).
+NAMES = 0x8C09895C
+NAME_COUNT = 271
+FAMILIES = ("pl", "op", "rk", "win", "bd", "end")
+FAMILY_TABLES = {"win": 0x8C09B08E, "bd": 0x8C09B116, "end": 0x8C09AC12}  # u16 names[] index per character
+
+
+def name_index(family, c):
+    return NAME_COUNT + 4 * FAMILIES.index(family) + (c - NEW.start)
 
 
 class T:
@@ -89,10 +109,44 @@ TABLES = [
     T(0x8C0C15A0, 1, 0x226BC8, note="f_8C06D1C8"),
     T(0x8C0C1B14, 2, 0x2270B0, note="f_8C06DC3C"),
     T(0x8C0D5498, 1, 0x239348, note="f_8C0904D6"),
+    T(0x8C0B4DF8, 32, 0x2190C8, note="f_8C055460: a row of 32 bytes per character, indexed by fighter +0x157"),
     # --- files: names[] indices (the file name table 0x8C09895C); the add-on's files get their own ---
+    T(NAMES, 4, None, count=NAME_COUNT, entries=NAME_COUNT + 4 * len(FAMILIES), new=(),
+      note="file names (f_8C0126F4 and the openers); the add-on's after the Dreamcast's"),
     T(0x8C09B08E, 2, None, count=40, note="win screen file (f_8C01C2A6); 0x24/0x25 are win24/win25"),
     T(0x8C09B0DE, 1, None, count=40, note="win screen: a byte per character (f_8C01C2A6)"),
     T(0x8C09B116, 2, None, count=40, note="bd file (f_8C01CA18): win portrait sprites"),
+    T(0x8C09AC12, 2, None, count=40, note="ending file (f_8C01BA82, f_8C01BC2A); 0: none"),
+    # --- arcade mode: the route, the world map, stages ---
+    T(0x8C0A6DF8, 1, 0x20B1C4, note="f_8C02B774"),
+    T(0x8C0A70AE, 1, 0x20B3A8, note="f_8C02C434 (a lookup function): the PSP's new entries are stages"),
+    T(0x8C0A70D6, 1, 0x20B3D2, note="f_8C02C43A: a character number (0x13 -> 0x11)"),
+    T(0x8C0A8248, 4, None, note="the routes: 16 x 8 opponents (f_8C02BD08; arcade.py makes the PSP's)"),
+    T(0x8C0A7176, 1, 0x20A784, note="the route's 9th opponent, the rival (f_8C02BD08)"),
+    T(0x8C0A719E, 1, 0x20A7AE, note="the route's last opponent, the boss (f_8C02BD08, f_8C02B8CE)"),
+    T(0x8C0A8380, 1, 0x20B64C, note="f_8C02C758"),
+    T(0x8C0A83A8, 1, 0x20B676, note="f_8C02C758 and on: a flag per character"),
+    T(0x8C0A83D0, 1, 0x20B6A0, note="a flag per character"),
+    T(0x8C0A83F8, 1, 0x20B6CA, note="a flag per character"),
+    T(0x8C0A8420, 1, 0x20B604, note="the character's stage (f_8C02CA78; PSP 0x2D798); 0xFF: none"),
+    T(0x8C0CF7D4, 1, 0x234154, note="prologue: the portrait's first part in the OP file's bank 0x15 (f_8C07E584)"),
+    T(0x8C0C1350, 1, 0x20A7AE, note="the boss again (f_8C06C02C & co.; the PSP's is the route's table)"),
+    # --- the select screens (tools/psp/screens.py fills the new entries) ---
+    T(0x8C0BE434, 1, 0x222FF6, note="select (f_8C06920E)"),
+    T(0x8C0BE266, 1, 0x222D4C, note="f_8C06443C"),
+    T(0x8C0BED8C, 4, None, count=30, entries=30, new=(),
+      note="animations by kind of object: a pointer per kind to one of two record groups (screens.py)"),
+    T(0x8C0C0C60, 4, None, count=15, entries=15, new=(),
+      note="the fight HUD's animations by kind: the 5th, 8C0C0AA6, the faces (screens.py)"),
+    T(0x8C0C2140, 2, 0x227858, note="f_8C070320"),
+    T(0x8C0AB820, 2, None, note="the names again: bank 8 parts (f_8C036730)"),
+    T(0x8C0C0D26, 2, None, note="the names again (f_8C06A5A8)"),
+    T(0x8C0C03B4, 4, None, count=40, note="select: big portrait animation (f_8C06BAD8)"),
+    T(0x8C0C1194, 2, None, note="select: name, a bank 8 part (f_8C06B272)"),
+    T(0x8C0C1AC8, 2, None, note="the world map's name strip: a bank 8 part (f_8C06DC3C; spacing 8C0C1B14)"),
+    T(0x8C0C11F4, 4, None, note="select: the name strip down the side: u16 spacing (0x8000: name 8 up), u16 bank 8 part (f_8C06B488)"),
+    T(0x8C0C142C, 2, None, note="select: name banner, a bank 8 part (f_8C06C866)"),
+    T(0x8C0C1478, 2, None, note="select: name banner width (f_8C06C866)"),
     # --- not by character: the PSP's additions the new characters use ---
     T(0x8C0B39C8, 4, 0x2178C8, "cmd", count=64, entries=66, new=range(64, 66),
       note="command definitions (f_8C04EBDC): 0x40 QCB x2 ending back + K, 0x41 QCF x2 ending forward + K"),
@@ -200,7 +254,25 @@ def patches(pr):
             else:
                 raise ValueError(t.kind)
             out.append((t.ext + t.size * c, v))
-    assert data <= EXT_END
+    assert data <= EXT_THROWS
+    return out
+
+
+def file_patches(families):
+    """[(address, bytes)]: the add-on's file names (FAMILIES' files that it
+    has built, for the new characters) and the tables that pick them"""
+    tables = {t.dc: t for t in layout()}
+    names = tables[NAMES]
+    out, a = [], EXT_NAMES
+    for f in families:
+        for c in NEW:
+            s = f"{f}{c:02x}.pac".encode() + b"\0"
+            out.append((a, s))
+            out.append((names.ext + 4 * name_index(f, c), struct.pack("<I", a)))
+            a += (len(s) + 3) & ~3
+            if f in FAMILY_TABLES:
+                out.append((tables[FAMILY_TABLES[f]].ext + 2 * c, struct.pack("<H", name_index(f, c))))
+    assert a <= EXT_ROUTES
     return out
 
 

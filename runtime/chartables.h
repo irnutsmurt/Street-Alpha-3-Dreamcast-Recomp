@@ -23,3 +23,6 @@ extern const unsigned g_psp_char_data_size;
 
 /* at boot and reset, once 1ST_READ.BIN is in RAM */
 void char_tables_init(void);
+
+/* where the table that was at dc is now (dc when it wasn't moved) */
+uint32_t char_table_moved(uint32_t dc);
