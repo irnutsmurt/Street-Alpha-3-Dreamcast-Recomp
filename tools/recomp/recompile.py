@@ -65,6 +65,15 @@ def extra_entries():
     return out
 
 
+def _chartables():
+    import importlib.util
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "psp", "chartables.py")
+    spec = importlib.util.spec_from_file_location("chartables", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def write_if_changed(path, text):
     if os.path.exists(path) and open(path).read() == text:
         return
@@ -101,13 +110,12 @@ def run(disc_dir, out_dir, report=None, progress=None):
     report = report or (lambda m: print("      " + m))
     progress = progress or (lambda d, t: None)
     os.makedirs(out_dir, exist_ok=True)
-    # PSP characters (tools/psp/build_char.py) move some tables: their literals follow
+    # the tables indexed by character number move to the extension RAM, with
+    # room for the PSP characters (tools/psp/chartables.py): their literals follow
     import codegen
-    reloc = os.path.join(out_dir, "relocate.json")
-    codegen.RELOCATE[:] = [tuple(int(x, 16) for x in r[:3]) for r in json.load(open(reloc))] \
-        if os.path.exists(reloc) else []
-    if codegen.RELOCATE:
-        report(f"{len(codegen.RELOCATE)} tables moved for the PSP characters")
+    chartables = _chartables()
+    codegen.RELOCATE[:] = chartables.relocations()
+    report(f"{len(codegen.RELOCATE)} character tables moved")
     data = open(os.path.join(disc_dir, "1ST_READ.BIN"), "rb").read()
     img = Image(data, MAIN_BASE)
 
@@ -215,6 +223,13 @@ def run(disc_dir, out_dir, report=None, progress=None):
     disp += ["};", f"const unsigned g_overlay_count = {len(ovl_funcs)};", ""]
     write_if_changed(os.path.join(out_dir, "dispatch.c"), "\n".join(disp))
     files.append("dispatch.c")
+    # where they went, for the runtime to copy them at boot (runtime/chartables.c)
+    ct = ['#include "chartables.h"', "const CharTable g_char_tables[] = {"]
+    ct += [f"  {{0x{t.dc:08X}u, {t.copy_count}u, {t.size}u, 0x{t.ext:08X}u}},  /* {t.note} */"
+           for t in chartables.TABLES]
+    ct += ["};", f"const unsigned g_char_table_count = {len(chartables.TABLES)};", ""]
+    write_if_changed(os.path.join(out_dir, "char_tables.c"), "\n".join(ct))
+    files.append("char_tables.c")
 
     report(f"wrote {len(files)} C files")
     progress(len(ovl_files) + 2, steps)

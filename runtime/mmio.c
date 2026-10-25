@@ -351,6 +351,7 @@ void mmio_write32(uint32_t a, uint32_t v) { wr(a, v, 4); }
 
 void mmio_reset(void) {
     memset(g_ram, 0, 16 << 20);
+    if (g_ext_ram) memset(g_ext_ram, 0, EXT_RAM_SIZE);
     memset(g_vram, 0, 8 << 20);
     memset(g_aica_ram, 0, 2 << 20);
     memset(s_p4, 0, sizeof s_p4);
