@@ -220,6 +220,14 @@ static int stub_index(uint32_t addr) {
 int psp_stub_call(uint32_t addr) {
     int index = stub_index(addr);
     if (index < 0) return 0;
+    if (getenv("SFA3_PSP_STUBS")) {  /* debug: log the engine's calls into PSP code */
+        static long long from = -1;
+        static int n;
+        if (from < 0) from = atoll(getenv("SFA3_PSP_STUBS"));
+        if ((long long)g_vblank_count >= from && n++ < 3000)
+            logf_("psp stub %06X(%08X, %08X) at frame %llu", (unsigned)index < g_psp_fn_count ? g_psp_fn_addr[index] : 0u,
+                  g.r[4], g.r[5], (unsigned long long)g_vblank_count);
+    }
     unsigned slot = ((addr & 0xFFFFFFu) - (SLOT_BASE & 0xFFFFFF)) / SLOT_SIZE;
     /* from the Dreamcast side: arguments r4-r7, then the stack */
     for (int i = 4; i < 8; i++) m.r[i] = g.r[i];

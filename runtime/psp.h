@@ -47,6 +47,7 @@ extern const PspCode g_psp_code[];
 extern const unsigned g_psp_code_count;
 extern const PspFn g_psp_fns[];
 extern const unsigned g_psp_fn_count;
+extern const uint32_t g_psp_fn_addr[];  /* each function's PSP address (logs) */
 
 #define PSP_EXT 0xF0000000u
 

@@ -268,6 +268,12 @@ static void poly_vertex(const uint32_t *w) {
 
 static void end_of_list(void) {
     static const uint32_t bits[LIST_COUNT] = {1u << 7, 1u << 8, 1u << 9, 1u << 10, 1u << 21};
+    if (getenv("SFA3_RENDER_LOG")) {  /* debug: which lists end */
+        static int n;
+        extern uint64_t g_vblank_count;
+        if ((long long)g_vblank_count >= atoll(getenv("SFA3_RENDER_LOG")) && n++ < 400)
+            logf_("ta: end of list %d at frame %llu", s_list, (unsigned long long)g_vblank_count);
+    }
     if (s_list >= 0 && s_list < LIST_COUNT) holly_raise(0, bits[s_list]);
     s_list = -1;
     s_strip = NULL;

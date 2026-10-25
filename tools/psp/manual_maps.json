@@ -1,0 +1,7 @@
+{
+ "_about": "PSP -> Dreamcast mappings confirmed by hand where align.py has too few votes. Addresses only, no game data.",
+ "globals": [
+  ["0x80f970", "0x80f990", "0x8c1888b4", "camera / scroll position (16.16 X at +0x10)"]
+ ],
+ "functions": {}
+}

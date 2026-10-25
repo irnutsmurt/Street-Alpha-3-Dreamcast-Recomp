@@ -542,9 +542,10 @@ def export_maps(globs, calls):
             functions[hex(p)] = hex(d)
     gb = collections.defaultdict(collections.Counter)
     for (d, p), v in globs.items():
-        if 0x8C010000 <= d < 0x8C800000 and not 0x1FEDE0 <= p < 0x2D4F30 - 0x1000:  # engine data, not tables in .data
-            gb[p][d] += v
-        elif 0x8C010000 <= d < 0x8C800000 and p >= 0x2D4F30:
+        # engine data; not the characters' own tables (0x23B000-0x2B3000) or
+        # the effect palettes they share, which the character files carry
+        if 0x8C010000 <= d < 0x8C800000 and p >= 0x1FEDE0 and not 0x23B000 <= p < 0x2B3000 \
+                and not 0x2C7F00 <= p < 0x2C8500:
             gb[p][d] += v
     pts = sorted((p, c.most_common(1)[0][0]) for p, c in gb.items() if c.most_common(1)[0][1] >= 2)
     segs = []
