@@ -206,8 +206,13 @@ save), which can also be edited by hand.
 The World Tour cheats work in World Tour mode; the game raises a level from
 the EXP only after a fight you win with that -ism, so an -ism you haven't
 fought with yet shows level 1 with the EXP at the most until you win once
-with it (then it jumps up, with the stat gains). The levels are saved with
-your World Tour data. In World Tour your fighter's label reads I-ISM: that's
+with it (then it jumps up, with the stat gains). The game also caps a
+character's **total** level at 32, shared by all three -isms: every -ism
+level-up counts toward it, and once it reaches 32 no -ism can level any
+more. So with the EXP cheats on, the first -ism you win with takes it to 32
+and the other two stay where they were (the original game works this way;
+the cheats don't change its rules). The levels are saved with your World
+Tour data. In World Tour your fighter's label reads I-ISM: that's
 the Dreamcast's World Tour style (your chosen X, A or V gauge plus the
 ISM-Plus abilities), the same on the original disc. The
 fight cheats work only in fights against the CPU: never in netplay, and not
