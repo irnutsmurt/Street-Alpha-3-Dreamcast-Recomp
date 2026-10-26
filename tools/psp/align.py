@@ -11,6 +11,7 @@ they make), their event sequences aligned, and every aligned pair votes:
   functions       Dreamcast function -> PSP function (the engine's API)
 
     python3 tools/psp/align.py <dreamcast files dir> <PSP BOOT.BIN> [out.json]
+    python3 tools/psp/align.py <dreamcast files dir> <PSP BOOT.BIN> --maps <maps.json>   (build_char.py's)
 """
 import collections
 import difflib
@@ -619,18 +620,23 @@ def export_maps(globs, calls, ending=()):
     return {"functions": functions, "globals": [[hex(a), hex(b), hex(c)] for a, b, c in segs]}
 
 
+def write_maps(dc_dir, boot, out):
+    """the maps build_char.py reads (globals and engine functions, the ending engine's too) to out"""
+    offs, globs, calls, n = align(dc_dir, boot)
+    egl, ecalls, vars_from, en = align_ending(dc_dir, boot)
+    for (d, p), v in ecalls.items():
+        # the engine's functions the ending engine calls; not its own (recompiled: where the
+        # Dreamcast's inlined a helper, the PSP's call lines up with some other call)
+        if not PSP_ENDING_CODE[0] <= p < PSP_ENDING_CODE[1]:
+            calls[(d, p)] += v
+    json.dump(export_maps(globs, calls, ending_globals(egl, vars_from)), open(out, "w"), indent=0)
+    print("function pairs aligned:", n, "; the ending engines':", en)
+
+
 def main():
     dc_dir, boot = sys.argv[1], sys.argv[2]
     if len(sys.argv) > 4 and sys.argv[3] == "--maps":
-        offs, globs, calls, n = align(dc_dir, boot)
-        egl, ecalls, vars_from, en = align_ending(dc_dir, boot)
-        for (d, p), v in ecalls.items():
-            # the engine's functions the ending engine calls; not its own (recompiled: where the
-            # Dreamcast's inlined a helper, the PSP's call lines up with some other call)
-            if not PSP_ENDING_CODE[0] <= p < PSP_ENDING_CODE[1]:
-                calls[(d, p)] += v
-        json.dump(export_maps(globs, calls, ending_globals(egl, vars_from)), open(sys.argv[4], "w"), indent=0)
-        print("function pairs aligned:", n, "; the ending engines':", en)
+        write_maps(dc_dir, boot, sys.argv[4])
         return
     offs, globs, calls, n = align(dc_dir, boot)
     print("function pairs aligned:", n)

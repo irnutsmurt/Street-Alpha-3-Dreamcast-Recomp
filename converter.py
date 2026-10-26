@@ -202,14 +202,21 @@ class App:
         ttk.Button(form, text="Browse…", command=self.pick_image).grid(row=0, column=2)
         ttk.Label(form, text="GDI, CUE/BIN (Redump) or CHD of Street Fighter Alpha 3 (USA)", style="Faint.TLabel").grid(
             row=1, column=1, sticky="w", padx=6)
-        ttk.Label(form, text="Install to").grid(row=2, column=0, sticky="w", pady=(8, 0))
+        ttk.Label(form, text="PSP image").grid(row=2, column=0, sticky="w", pady=(8, 0))
+        last_psp = remembered.get("psp_image", "")
+        self.psp_image = tk.StringVar(value=last_psp if os.path.isfile(last_psp) else "")
+        ttk.Entry(form, textvariable=self.psp_image).grid(row=2, column=1, sticky="ew", padx=6, pady=(8, 0))
+        ttk.Button(form, text="Browse…", command=self.pick_psp_image).grid(row=2, column=2, pady=(8, 0))
+        ttk.Label(form, text="Optional: SFA3 MAX (USA) for PSP, ISO, CSO or ZIP: adds Eagle, Maki, Yun, Ingrid",
+                  style="Faint.TLabel").grid(row=3, column=1, sticky="w", padx=6)
+        ttk.Label(form, text="Install to").grid(row=4, column=0, sticky="w", pady=(8, 0))
         self.install = tk.StringVar(value=(after_update or {}).get("install") or remembered.get("install")
                                     or default_install())
-        ttk.Entry(form, textvariable=self.install).grid(row=2, column=1, sticky="ew", padx=6, pady=(8, 0))
-        ttk.Button(form, text="Browse…", command=self.pick_install).grid(row=2, column=2, pady=(8, 0))
+        ttk.Entry(form, textvariable=self.install).grid(row=4, column=1, sticky="ew", padx=6, pady=(8, 0))
+        ttk.Button(form, text="Browse…", command=self.pick_install).grid(row=4, column=2, pady=(8, 0))
         self.desktop = tk.BooleanVar(value=True)
         ttk.Checkbutton(form, text="Create a desktop shortcut", variable=self.desktop).grid(
-            row=3, column=1, sticky="w", padx=6, pady=(6, 0))
+            row=5, column=1, sticky="w", padx=6, pady=(6, 0))
 
         steps = ttk.LabelFrame(root, text="Progress")
         steps.pack(fill="x", **pad)
@@ -270,6 +277,13 @@ class App:
             self.image.set(p)
             save_settings(image=os.path.abspath(p))
 
+    def pick_psp_image(self):
+        p = filedialog.askopenfilename(title="Your PSP disc image (optional)", filetypes=[
+            ("PSP disc images", "*.iso *.cso *.zip *.ISO *.CSO *.ZIP"), ("All files", "*")])
+        if p:
+            self.psp_image.set(p)
+            save_settings(psp_image=os.path.abspath(p))
+
     def pick_install(self):
         p = filedialog.askdirectory(title="Install the game to", initialdir=os.path.dirname(self.install.get()))
         if p:
@@ -327,11 +341,14 @@ class App:
 
     def start(self):
         image, install = self.image.get().strip(), self.install.get().strip()
+        psp = self.psp_image.get().strip()
         update = self.is_update()
         if not image and not update:
             return self.fail("Choose your disc image first.")
         if image and not os.path.exists(image):
             return self.fail("That disc image wasn't found.")
+        if psp and not os.path.exists(psp):
+            return self.fail("That PSP disc image wasn't found.")
         try:
             os.makedirs(install, exist_ok=True)
         except OSError as e:
@@ -345,16 +362,17 @@ class App:
         self.convert_btn.config(state="disabled")
         self.play_btn.config(state="disabled")
         self.bar.config(value=0)
-        save_settings(image=os.path.abspath(image) if image else None, install=os.path.abspath(install))
-        self.worker = threading.Thread(target=self.work, args=(None if update else image, install, self.desktop.get()),
-                                       daemon=True)
+        save_settings(image=os.path.abspath(image) if image else None, install=os.path.abspath(install),
+                      psp_image=os.path.abspath(psp) if psp else None)
+        self.worker = threading.Thread(target=self.work, args=(None if update else image, install, self.desktop.get(),
+                                                               psp or None), daemon=True)
         self.worker.start()
 
-    def work(self, image, install, desktop):
+    def work(self, image, install, desktop, psp_image=None):
         try:
             out = pipeline.run(image, progress=lambda st, f, m: self.events.put(("progress", st, f, m)),
                                log=lambda m: self.events.put(("log", m)),
-                               paths=pipeline.Paths(install=install), toolchain="zig")
+                               paths=pipeline.Paths(install=install), toolchain="zig", psp_image=psp_image)
             if image is not None:  # an update keeps the shortcuts as the player left them
                 try:
                     made = shortcuts.create_shortcuts(out, self.icon_for(out), desktop=desktop)
@@ -516,23 +534,24 @@ class App:
             subprocess.Popen(["xdg-open", folder])
 
 
-def convert_headless(image, install):
-    """SFA3-Setup --convert IMAGE FOLDER: the same conversion without the window.
+def convert_headless(image, install, psp_image=None):
+    """SFA3-Setup --convert IMAGE FOLDER [PSP-IMAGE]: the same conversion without the window.
     SFA3-Setup --update FOLDER: update an install (image None)."""
     def show(step, frac, msg):
         print(f"\r[{pipeline.STEPS.index(step) + 1}/{len(pipeline.STEPS)}] {msg} {int(frac * 100)}%   ",
               end="", flush=True)
     try:
         out = pipeline.run(image, progress=show, log=lambda m: None, paths=pipeline.Paths(install=install),
-                           toolchain="zig")
+                           toolchain="zig", psp_image=psp_image)
     except pipeline.SetupError as e:
         sys.exit(f"\nfailed: {e}")
     print(f"\ndone: {out}")
 
 
 def main():
-    if len(sys.argv) == 4 and sys.argv[1] == "--convert":
-        return convert_headless(os.path.abspath(sys.argv[2]), os.path.abspath(sys.argv[3]))
+    if len(sys.argv) in (4, 5) and sys.argv[1] == "--convert":
+        return convert_headless(os.path.abspath(sys.argv[2]), os.path.abspath(sys.argv[3]),
+                                os.path.abspath(sys.argv[4]) if len(sys.argv) == 5 else None)
     if len(sys.argv) == 3 and sys.argv[1] == "--update":
         return convert_headless(None, os.path.abspath(sys.argv[2]))
     after = None

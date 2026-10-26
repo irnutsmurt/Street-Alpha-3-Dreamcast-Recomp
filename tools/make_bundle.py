@@ -85,12 +85,19 @@ def winpath(p):
     return "Z:" + os.path.abspath(p).replace("/", "\\")
 
 
+# the PSP characters add-on's tools (tools/psp; build_char imports most of them inside functions)
+PSP_MODULES = ["psp_iso", "align", "build_char", "chartables", "screens", "ranking", "menus", "hud", "worldtour",
+               "files", "ending", "throws", "arcade", "sound", "sprites", "pac", "mipsgen", "mips"]
+
+
 def pyinstaller(platform, dist):
     args = ["--noconfirm", "--onedir", "--windowed", "--name", "SFA3-Setup"]
     work = os.path.join(ROOT, "build", "pyinstaller", platform)
     paths = {"dist": dist, "work": work, "spec": work, "tools": os.path.join(ROOT, "tools"),
              "recomp": os.path.join(ROOT, "tools", "recomp"),
+             "psp": os.path.join(ROOT, "tools", "psp"),
              "extra": os.path.join(ROOT, "tools", "recomp", "extra_entries.txt"),
+             "maps": os.path.join(ROOT, "tools", "psp", "manual_maps.json"),
              "app": os.path.join(ROOT, "converter.py")}
     if platform == "windows":
         paths = {k: winpath(v) for k, v in paths.items()}
@@ -104,9 +111,10 @@ def pyinstaller(platform, dist):
         sep = ":"
     subprocess.check_call(cmd + args + [
         "--distpath", paths["dist"], "--workpath", paths["work"], "--specpath", paths["spec"],
-        "--paths", paths["tools"], "--paths", paths["recomp"],
+        "--paths", paths["tools"], "--paths", paths["recomp"], "--paths", paths["psp"],
         "--hidden-import", "recompile", "--hidden-import", "gdi_extract",
-        "--add-data", paths["extra"] + sep + ".", paths["app"]], env=env)
+        *[a for m in PSP_MODULES for a in ("--hidden-import", m)],
+        "--add-data", paths["extra"] + sep + ".", "--add-data", paths["maps"] + sep + ".", paths["app"]], env=env)
 
 
 def copy_zig(platform, out):

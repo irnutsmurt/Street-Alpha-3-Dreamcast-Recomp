@@ -6,9 +6,12 @@ From the player's own disc image to a playable build, all on their machine:
     2. extract  the files of its high-density area
     3. verify   the main executable's SHA-1 (the supported release)
     4. recomp   the SH-4 / ARM code recompiled to C
-    5. build    compiled and linked: the bundled Zig toolchain with the
+    5. addon    optional: the PSP characters (Eagle, Maki, Yun, Ingrid) from the
+                player's PSP Street Fighter Alpha 3 MAX image: its code
+                recompiled to C, its files converted (tools/psp/)
+    6. build    compiled and linked: the bundled Zig toolchain with the
                 prebuilt runtime library, or CMake (developers)
-    6. finish   build/disc_path.txt (the game reads its disc through it)
+    7. finish   build/disc_path.txt (the game reads its disc through it)
 
 Progress goes to a callback: progress(step, fraction, message).
 """
@@ -25,17 +28,19 @@ ROOT = (os.path.dirname(sys.executable) if getattr(sys, "frozen", False)
         else os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 sys.path.insert(0, os.path.join(ROOT, "tools", "recomp"))
+sys.path.append(os.path.join(ROOT, "tools", "psp"))
 
 import disc_image  # noqa: E402
 import zig_build  # noqa: E402
 from version import VERSION  # noqa: E402
 
-STEPS = ["disc", "extract", "verify", "recomp", "build", "finish"]
+STEPS = ["disc", "extract", "verify", "recomp", "addon", "build", "finish"]
 STEP_NAMES = {
     "disc": "Reading the disc image",
     "extract": "Extracting the game files",
     "verify": "Checking the disc",
     "recomp": "Recompiling the game code",
+    "addon": "Adding the PSP characters",
     "build": "Building the game",
     "finish": "Finishing",
 }
@@ -111,10 +116,65 @@ class Paths:
         self.game_dir = install or os.path.join(self.build, "game")
 
 
-def run(image, force=False, toolchain="auto", progress=None, log=print, paths=None):
+def build_addon(paths, psp_image, log, step):
+    """The PSP characters add-on (tools/psp): from psp_image, or from the install's copy of its files
+    (an update). Returns the C files to compile with the game ([] when there's no add-on). The game
+    reads the converted files from <data>/addon (named in its files.txt)."""
+    import psp_iso
+    psp_dir = os.path.join(paths.build, "psp")
+    boot = os.path.join(psp_dir, "PSP_GAME", "SYSDIR", "BOOT.BIN")
+    data = os.path.join(psp_dir, "PSP_GAME", "USRDIR", "usa", "data")
+    if psp_image:
+        step("addon", 0, "Reading the PSP disc image")
+        try:
+            name = psp_iso.extract(psp_image, psp_dir + ".new",
+                                   progress=lambda d, t: step("addon", 0.3 * d / max(t, 1), "Reading the PSP disc image"))
+        except (psp_iso.ImageError, OSError, ValueError) as e:
+            shutil.rmtree(psp_dir + ".new", ignore_errors=True)
+            raise SetupError(f"the PSP disc image: {e}")
+        shutil.rmtree(psp_dir, ignore_errors=True)
+        os.replace(psp_dir + ".new", psp_dir)
+        log(f"addon: {name}")
+    elif not os.path.exists(boot):
+        return []
+    import align
+    import build_char
+    maps = os.path.join(paths.build, "psp_maps.json")
+    out_dir = os.path.join(paths.build, "psp_out")
+    step("addon", 0.35, "Lining up the PSP's code with the Dreamcast's")
+    with contextlib.redirect_stdout(io.StringIO()):
+        align.write_maps(paths.disc, boot, maps)
+    step("addon", 0.45, "Converting the PSP characters (a few minutes)")
+    shutil.rmtree(out_dir, ignore_errors=True)
+    out = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(out):
+            problems = build_char.build(boot, data, paths.disc, out_dir, maps)
+    except (AssertionError, OSError, ValueError, KeyError, IndexError, SystemExit) as e:
+        raise SetupError(f"converting the PSP characters failed ({e})")
+    for line in out.getvalue().splitlines():
+        log("addon: " + line)
+    if problems:
+        raise SetupError(f"converting the PSP characters left {len(problems)} problems (first: {problems[0]})")
+    addon_dir = os.path.join(paths.build, "addon")
+    shutil.rmtree(addon_dir, ignore_errors=True)
+    os.makedirs(addon_dir)
+    names = sorted(n for n in os.listdir(out_dir) if n.upper().endswith((".PAC", ".BIN")))
+    for n in names:
+        shutil.copy2(os.path.join(out_dir, n), os.path.join(addon_dir, n))
+    with open(os.path.join(addon_dir, "files.txt"), "w") as f:
+        f.write("".join(n + "\n" for n in names))
+    step("addon", 1.0, "PSP characters converted")
+    return [os.path.join(out_dir, n) for n in sorted(os.listdir(out_dir)) if n.startswith("psp_") and n.endswith(".c")]
+
+
+def run(image, force=False, toolchain="auto", progress=None, log=print, paths=None, psp_image=None):
     """The whole setup. Returns the path of the built executable.
     image=None updates an existing install (paths.install): the disc it was made
-    from is read again, and only what changed is compiled (the object cache)."""
+    from is read again, and only what changed is compiled (the object cache).
+    psp_image: the player's PSP Street Fighter Alpha 3 MAX (USA) image for the PSP characters add-on
+    (.iso, .cso or a .zip of one); an install that has the add-on keeps a copy of its files and updates
+    it without the image."""
     paths = paths or Paths()
     say = progress or (lambda step, frac, msg: None)
 
@@ -194,8 +254,18 @@ def run(image, force=False, toolchain="auto", progress=None, log=print, paths=No
     recompile.run(paths.disc, paths.generated, report=lambda m: log("recomp: " + m),
                   progress=lambda d, t: step("recomp", d / max(t, 1)))
 
-    # 5. build
+    # 5. the PSP characters (optional)
+    psp_c = build_addon(paths, psp_image, log, step)
+    if not psp_c:
+        shutil.rmtree(os.path.join(paths.build, "addon"), ignore_errors=True)
+
+    # 6. build
     use_zig = toolchain == "zig" or (toolchain == "auto" and paths.zig and paths.runtime_lib)
+    if use_zig and psp_c:  # the add-on's C goes with the game's (CMake finds build/psp_out itself)
+        for src in psp_c:
+            shutil.copy2(src, os.path.join(paths.generated, os.path.basename(src)))
+        with open(os.path.join(paths.generated, "sources.txt"), "a") as f:
+            f.write("".join(os.path.basename(src) + "\n" for src in psp_c))
     if use_zig:
         if not paths.zig:
             raise SetupError("the bundled compiler (zig) is missing")
@@ -240,7 +310,7 @@ def run(image, force=False, toolchain="auto", progress=None, log=print, paths=No
         out = os.path.join(bdir, exe_name("sfa3"))
     log(f"build: {out}")
 
-    # 6. the game finds its disc through build/disc_path.txt
+    # 7. the game finds its disc through build/disc_path.txt
     step("finish")
     if paths.install and use_zig:  # the libraries the game links against, next to it
         if os.name == "nt":  # next to the game, where Windows looks first
@@ -255,6 +325,7 @@ def run(image, force=False, toolchain="auto", progress=None, log=print, paths=No
         # the image). The compiled objects stay in data/cache for updates.
         shutil.rmtree(os.path.join(paths.game_dir, "obj"), ignore_errors=True)  # from versions before the cache
         shutil.rmtree(paths.generated, ignore_errors=True)
+        shutil.rmtree(os.path.join(paths.build, "psp_out"), ignore_errors=True)  # the add-on's: made again each time
         for name in os.listdir(paths.disc):
             if name not in ("IP.BIN", "1ST_READ.BIN"):
                 p = os.path.join(paths.disc, name)
@@ -266,6 +337,6 @@ def run(image, force=False, toolchain="auto", progress=None, log=print, paths=No
         import time
         with open(os.path.join(paths.build, "install.json"), "w") as f:
             json.dump({"version": VERSION, "gdi": os.path.abspath(gdi), "image": source_image,
-                       "built": int(time.time())}, f, indent=1)
+                       "psp_characters": bool(psp_c), "built": int(time.time())}, f, indent=1)
     step("finish", 1.0, "Done")
     return out

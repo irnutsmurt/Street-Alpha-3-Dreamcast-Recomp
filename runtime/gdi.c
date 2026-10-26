@@ -91,7 +91,7 @@ typedef struct {
     char name[32];  /* as in the directory, without ";1" */
     FILE *f;
     uint32_t size, lba, sectors;
-    int added, found;
+    int added, found;  /* added: 0 a replacement, 1 an added file, 2 either (the disc has it or not) */
 } Override;
 static Override s_over[OVERRIDE_MAX];
 static int s_nover, s_over_ready;
@@ -127,6 +127,7 @@ static void add_override(const char *name, const char *path, int added) {
 
 void gdi_override(const char *name, const char *path) { add_override(name, path, 0); }
 void gdi_add_file(const char *name, const char *path) { add_override(name, path, 1); }
+void gdi_provide(const char *name, const char *path) { add_override(name, path, 2); }
 
 static int same_name(const char *a, const char *b, size_t n) {  /* case-insensitive */
     for (size_t i = 0; i < n; i++) {
@@ -176,7 +177,7 @@ static void build_root(void) {
         }
     }
     uint32_t n = (len + 2047) / 2048, added = 0;
-    for (int k = 0; k < s_nover; k++) added += s_over[k].added;
+    for (int k = 0; k < s_nover; k++) added += s_over[k].added != 0;  /* room for the "either" ones too */
     uint32_t extra = added ? (added * 48 + 2047) / 2048 + 1 : 0;
     s_root_sectors = n + extra;
     s_root = calloc(s_root_sectors, 2048);
@@ -192,10 +193,11 @@ static void build_root(void) {
             }
             for (int k = 0; k < s_nover; k++) {
                 size_t l = strlen(s_over[k].name);
-                if (!s_over[k].added && nlen >= l && same_name(nm, s_over[k].name, l) && (nlen == l || nm[l] == ';')) {
+                if (s_over[k].added != 1 && nlen >= l && same_name(nm, s_over[k].name, l) && (nlen == l || nm[l] == ';')) {
                     put32_both(d + off + 2, s_over[k].lba);
                     put32_both(d + off + 10, s_over[k].size);
                     s_over[k].found = 1;
+                    s_over[k].added = 0;
                     logf_("disc: %s replaced (%u bytes)", s_over[k].name, s_over[k].size);
                 }
             }
@@ -204,6 +206,11 @@ static void build_root(void) {
     }
     /* the added files: all records re-sorted by name (the game's lookup
      * relies on the directory's order) and packed again */
+    added = 0;
+    for (int k = 0; k < s_nover; k++) {
+        if (s_over[k].added == 2) s_over[k].added = 1;  /* "either", not on the disc: added */
+        added += s_over[k].added;
+    }
     if (!added) return;
     typedef struct { char key[40]; uint8_t rec[64]; uint8_t len; } Rec;
     uint32_t cap = added, nrec = 0;

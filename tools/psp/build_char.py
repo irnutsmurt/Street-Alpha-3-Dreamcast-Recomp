@@ -814,8 +814,10 @@ def dc_text(dc_dir, cid, psp_data=None):
     return 20, [b"\x00\x00\x00\x00"] * 20
 
 
-def main():
-    boot_path, psp_data, dc_dir, out_dir, maps, spec = sys.argv[1:7]
+def build(boot_path, psp_data, dc_dir, out_dir, maps, spec="26=26,27=27,28=28,29=29"):
+    """the add-on from the PSP's BOOT.BIN and data, the Dreamcast's files and align.py's maps: the C (psp_*.c)
+    and the files the game reads (the rest) in out_dir; spec: the characters, <PSP id>=<file id>,...
+    Returns the problems (code and data with no counterpart)."""
     b = Build(boot_path, psp_data, maps)
     os.makedirs(out_dir, exist_ok=True)
     import screens  # first: its record groups in the extension RAM are the counterparts of PSP data
@@ -902,6 +904,11 @@ def main():
     for p in sorted(set(b.problems + problems))[:60]:
         print("  problem:", p)
     print(f"{len(set(b.problems + problems))} problems; C in {nfiles} files")
+    return sorted(set(b.problems + problems))
+
+
+def main():
+    build(*sys.argv[1:7])
 
 
 if __name__ == "__main__":

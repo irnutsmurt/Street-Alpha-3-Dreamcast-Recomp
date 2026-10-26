@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "chartables.h"
 #include "cpu.h"
 #include "gdi.h"
 #include "pvr.h"
@@ -305,6 +306,28 @@ void hle_init(const char *gdi_path) {
                 *eq = 0;
                 gdi_add_file(item, eq + 1);
             }
+        }
+    }
+    /* the PSP characters add-on's files: the setup's (tools/pipeline.py) in <data>/addon, named in its
+     * files.txt; read only by a game with the add-on built in */
+    if (g_psp_char_data_size) {
+        char path[1100], line[256];
+        snprintf(path, sizeof path, "%s/addon/files.txt", g_data_dir);
+        FILE *f = fopen(path, "r");
+        if (f) {
+            int n = 0;
+            while (fgets(line, sizeof line, f)) {
+                line[strcspn(line, "\r\n")] = 0;
+                if (!line[0]) continue;
+                snprintf(path, sizeof path, "%s/addon/%s", g_data_dir, line);
+                gdi_provide(line, path);
+                n++;
+            }
+            fclose(f);
+            logf_("add-on: %d files from %s/addon", n, g_data_dir);
+        } else if (!add) {  /* its code without its files (the select screens, the HUD) can't run */
+            fatal("the PSP characters' files are missing (%s/addon/files.txt). Open the setup app and press "
+                  "Update (or Convert with your PSP disc image) to make them again.", g_data_dir);
         }
     }
     const char *rep = getenv("SFA3_REPLACE");
