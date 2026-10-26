@@ -230,6 +230,8 @@ TABLES = [
     # --- the arcade select screen ---
     T(0x8C0BE53C, 2, 0x2230B7, note="a character's cell (column, row): where the cursor starts, e.g. on a "
                                     "continue (8C0684F2; the 3 handlers at 8C0BE530 come before it)"),
+    T(0x8C0C0E04, 2, None, note="pre-fight dialogue: a speaker's face, a SELECT.PAC bank 8 part (8C06A948); "
+                                "the PSP's 0x226098 (screens.py)"),
 ]
 
 

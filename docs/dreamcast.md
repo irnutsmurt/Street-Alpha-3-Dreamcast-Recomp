@@ -442,7 +442,9 @@ pointer table starts).
   (descriptor word 38's entry 0) from `8C0A8468`[character] (`8C0270EA`),
   `8C0A8490`[(object +0x3B - 4) x 40 + character] (`8C0272A0`) or
   `8C0A8508`[the same] (`8C028BD6`), `0xFF` none; `f_8C02CBB6` shows the
-  lines (`8C0A8450`: the object's 6 states). Bank `0x1A` (`BDnn.PAC`) holds
+  lines (`8C0A8450`: the object's 6 states). The faces: type 14 objects
+  with id 6 (`8C06A8BA`), a `SELECT.PAC` bank 8 part from
+  `8C0C0E04`[character] with the VS portrait's palette. Bank `0x1A` (`BDnn.PAC`) holds
   extra sprites: tiles `8CA30000`, parts `8CA3E000`. docs/psp-characters.md
   (Pre-fight dialogues) has more.
 - The character's stage: `8C0A8420` (`f_8C02CA78`); per-character flags
