@@ -28,7 +28,10 @@
 /* SELECT.PAC's sprite banks (8 and B) go to fixed places with little room
  * between them; the add-on's, with the PSP characters' sprites added, are
  * bigger: a section that doesn't fit its place goes to the extension memory
- * instead (the bank's table points there) */
+ * instead (the bank's table points there). (Not for a fight's banks: the
+ * fight's sprite code wants their tiles in the main RAM. The PSP Yun's
+ * dialogue sprites, bank 0x1A, too big for their place, get room by the
+ * add-on moving the bank's parts instead: build_char.py, BD_PARTS.) */
 #define EXT_SELECT (EXT_RAM_BASE + 0x600000u)
 static const struct { uint32_t tag, room, at, table; } s_select[] = {
     {0x02000008u, 0x8CB94C00u - 0x8CAF4800u, 0x000000u, TILE_BY_BANK},   /* bank 8 tiles */
@@ -146,17 +149,23 @@ void hle_open_file(void) {
     f_8C012C80_orig();
 }
 
-/* --- the select screen's big portraits: their palettes ---
- * f_8C06BA42 & co. load a portrait's palette, 0x4C0 + character x 6 +
- * colour, from bank 8's palettes (f_8C069D64(index, slot, count)); for 0x26
- * and on that's other palettes (0x5A4 is Sodom's extra one). The add-on puts
- * the PSP characters' after the Dreamcast's: from g_psp_portrait_palettes. */
+/* --- the select screen's portrait sprites: their palettes ---
+ * 8C06BB92 loads the palette of the sprite beside the big portrait, 0x4C0 +
+ * character x 6 + colour, from bank 8's palettes (f_8C069D64(index, slot,
+ * count)) into slot 32 + 2 x side; for 0x26 and on that's other palettes
+ * (0x5A4 is Sodom's extra one). The add-on puts the PSP characters' after
+ * the Dreamcast's, from g_psp_portrait_palettes: 6 each, Ingrid's 12 (her
+ * sprite uses two a colour, slots 32 and 33 + 2 x side, as on the PSP). */
+#define TWO_PALETTES 0x29u
 extern const uint32_t g_psp_portrait_palettes;
 void f_8C069D64_orig(void);
 void hle_select_palette(void) {
-    uint32_t first = 0x4C0u + FIRST_NEW * 6u;
-    if (g.pr == 0x8C06BB96u && g_psp_portrait_palettes && g.r[4] - first < NEW_COUNT * 6u)
-        g.r[4] = g_psp_portrait_palettes + (g.r[4] - first);
+    uint32_t first = 0x4C0u + FIRST_NEW * 6u, k = g.r[4] - first;
+    if (g.pr == 0x8C06BB96u && g_psp_portrait_palettes && k < NEW_COUNT * 6u) {
+        uint32_t c = FIRST_NEW + k / 6u, colour = k % 6u;
+        g.r[4] = g_psp_portrait_palettes + (c - FIRST_NEW) * 6u + colour;
+        if (c == TWO_PALETTES) g.r[4] += colour, g.r[6] = 2;
+    }
     f_8C069D64_orig();
 }
 

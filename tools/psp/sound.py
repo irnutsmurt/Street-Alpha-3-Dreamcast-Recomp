@@ -20,6 +20,9 @@ The sample numbers line up: every character the two have in common has as
 many samples on the PSP as on the Dreamcast, in the same order, and the
 voice records (section 0xD, 64 x 16 bytes) are the same format on both.
 
+Level: the PSP's samples are about 1.53 times as loud as the Dreamcast's
+for the same voices; the new characters' are scaled by GAIN to match.
+
 Room: the sound memory map (ZERO3.MLT) gives each player's voice bank
 0x48000 bytes and its KO echo bank 0x5000; Maki's, Yun's and Ingrid's
 voices are bigger, so their samples are cut to their sound (trailing
@@ -207,9 +210,15 @@ def fit(samples):
     return [ratio(r, len(x), f) for r, x in samples], f
 
 
+# The PSP's voices are louder than the Dreamcast's: for the characters both
+# have, a sample's RMS on the PSP is 1.53 times the Dreamcast's (the median;
+# Ryu, Ken, Sagat, Juli alike). The new characters' are scaled to match.
+GAIN = 1 / 1.53
+
+
 def voice_bank(pphd, vag, sosb_template, smpb_template):
     """(SOSB, SMPB, [(rate, length)]) for a PSP character's voice bank"""
-    samples = [trimmed(rate, x, k == 0) for k, (rate, x) in enumerate(psp_bank(pphd, vag))]
+    samples = [trimmed(rate, [int(round(v * GAIN)) for v in x], k == 0) for k, (rate, x) in enumerate(psp_bank(pphd, vag))]
     ratios, f = fit(samples)
     n = len(samples)
     rec0 = struct.unpack_from("<I", sosb_template, SOSB_HEAD)[0]

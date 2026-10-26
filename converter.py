@@ -195,12 +195,15 @@ class App:
         self.update_btn = ttk.Button(self.update_bar, text="Get it", command=self.get_new_app)
         self.update_btn.pack(side="left", padx=8)
         self.new_app = None
+        remembered = load_settings()
+        self.auto_update = tk.BooleanVar(value=bool(remembered.get("auto_update_game", False)))
+        ttk.Checkbutton(self.update_bar, text="Then update the game by itself", variable=self.auto_update,
+                        command=lambda: save_settings(auto_update_game=self.auto_update.get())).pack(side="left")
 
         form = ttk.Frame(root)
         form.pack(fill="x", **pad)
         form.columnconfigure(1, weight=1)
         ttk.Label(form, text="Disc image").grid(row=0, column=0, sticky="w")
-        remembered = load_settings()
         last_image = remembered.get("image", "")
         self.image = tk.StringVar(value=last_image if os.path.isfile(last_image) else "")
         ttk.Entry(form, textvariable=self.image).grid(row=0, column=1, sticky="ew", padx=6)
@@ -222,10 +225,6 @@ class App:
         self.desktop = tk.BooleanVar(value=True)
         ttk.Checkbutton(form, text="Create a desktop shortcut", variable=self.desktop).grid(
             row=5, column=1, sticky="w", padx=6, pady=(6, 0))
-        self.auto_update = tk.BooleanVar(value=bool(remembered.get("auto_update_game", False)))
-        ttk.Checkbutton(form, text="Update the game by itself after this app updates", variable=self.auto_update,
-                        command=lambda: save_settings(auto_update_game=self.auto_update.get())).grid(
-            row=6, column=1, sticky="w", padx=6, pady=(2, 0))
 
         steps = ttk.LabelFrame(root, text="Progress")
         steps.pack(fill="x", **pad)

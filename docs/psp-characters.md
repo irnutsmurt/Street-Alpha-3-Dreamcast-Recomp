@@ -358,6 +358,14 @@ with the add-on built, `build_char.py` adds the PSP's entries
 The PSP code's own references to these tables go to the moved copies, which
 have the PSP's 42-entry layout.
 
+Added in 0.2.2: the ATTACK LIST's rows (`8C0D5064`, kind `ptr_rank`), the
+pre-fight dialogue choices (`8C0A8468`, and `8C0A8490` / `8C0A8508` a row
+each, 44 bytes apart, with `chartables.REPLACE` changing the code's row
+stride), and the arcade select's character cells (`8C0BE53C`: (column, row)
+per character, where the cursor starts, e.g. after a continue; the PSP's
+`0x2230B7`; without it Yun's cursor started on Maki's cell). The versus
+select's twin (`8C0C2140`) was moved already.
+
 Two tables by object type are moved the same way (with no entries added:
 the characters register their handlers as a fight starts, `f_8C046D6E`).
 The new characters' types run past the Dreamcast's ends: written there, a
@@ -482,8 +490,11 @@ Built so far (`files.py`):
 - `PLnn.PAC`: the PSP's sprite parts, tiles (twiddled), palettes (red and
   blue swapped), animation sections `0xA` and `0xD`; Ryu's sound sections.
   Section `0x10000E00` is the move list (a 256x256 texture for the pause
-  screen's command list; the PSP's is linear, ABGR, and Yun's is in
-  Japanese): still Ryu's.
+  menu's ATTACK LIST; the PSP's is linear, ABGR1555): converted
+  (`pac.convert_texture`). The PSP's four new move lists name the moves in
+  Japanese (the banner is English), as the PSP itself shows them. Each
+  version packs its textures its own way (the PSP's Ryu has a piece more at
+  the start), so the texture has to match the rows table (below).
 - `OPnn.PAC`: bank `0x15` (the portrait and the screen's frame; parts 0-3
   and 11-14 are the frame, which the PSP draws differently: its own kept),
   palettes (68, swapped) and after them the text: personal data (10 lines of
@@ -875,6 +886,53 @@ module follows each (its dispatcher `0x1CB124` reads the table at
 `0x2B2310`). Yun's own descriptor builder `0x1BF93C` is a no-op at run time
 like `0x6AB48` (the build runs it).
 
+### The pause menu's ATTACK LIST
+
+The rows shown come from the character's move-list texture and a record
+picked by `8C0D5064`[character] (38 pointers; `8C08FA32`): bytes of texture
+row numbers by scroll position and line, one of nine shared records
+(`8C0D4EFA`-`8C0D502A`) chosen by the list's length. The PSP's table
+(`0x238EC8`, 42) points into the same nine records (`0x238D5E`-`0x238E8E`,
+byte for byte the same), but it lengthened some of the old characters' lists
+(22 of 38 entries agree), so the moved table maps the PSP's record to the
+Dreamcast's of the same rank (chartables kind `ptr_rank`): Eagle the second,
+Maki the seventh, Yun and Ingrid the eighth. Without it the new characters'
+rows were whatever followed the table (every line showing the banner).
+
+### Pre-fight dialogues (arcade)
+
+A dialogue is one of the player's scripts: descriptor word 38's entry 0 is a
+table of scripts, each a list of u16 (text number + 1 in bits 0-9, bit 15
+the speaker's side), the text numbers indexing entry 1 (the lines; for a new
+character the PSP's `bdNN_u.pac` section `0x10001`, `build_char.dc_text`).
+The stage object runs it (`8C0A8450`: 6 states, `f_8C02CBB6` the lines);
+its +0x42 is the script, set from per-character tables (`0xFF`: none):
+
+| Table | Picked by | Read at | PSP |
+|---|---|---|---|
+| `8C0A8468` | character | `8C0270EA`, `8C027194` | `0x20B508` (42) |
+| `8C0A8490` | occasion (stage object +0x3B - 4: 0-2) x 40 + character | `8C0272A0` | `0x20B532`, rows of 42 |
+| `8C0A8508` | occasion (0-1) x 40 + character | `8C028BD6` | `0x20B5B0`, rows of 42 |
+
+The Dreamcast's rows are 40 bytes (38 characters, 2 spare): the new
+characters read the spare bytes and the next row's first (Maki got none of
+hers: `FF` padding; Yun Ryu's row's numbers). Moved, each row is a table of
+its own, 44 bytes apart, and the code's row x 40 becomes row x 44
+(`chartables.REPLACE`: the `shll` at `8C0272A2` and `8C028BDA` replaced by
+C in the recompiled code, `codegen.REPLACE`). The new characters' entries:
+`8C0A8468` Eagle 3, Maki none, Yun 4, Ingrid 0; `8C0A8490` rows 0 / 1 / 2:
+all 0 / all 2 / 4 4 5 4; `8C0A8508` rows 0 / 1: all 1 / none, 3, 3, 3.
+
+The dialogue's extra sprites are bank `0x1A` from `BDnn.PAC`: tiles at
+`8CA30000`, parts at `8CA3E000` (the banks' default places `8C09AF10` /
+`8C09AE80` + 4 x bank; the parts load first). The PSP Yun's tiles are 86047
+bytes against the Dreamcast's biggest 54278: they ran over his parts and on
+to `8CA4501F` (a crash later in a run). The add-on moves the bank's parts'
+default place to `8CA45800` (`build_char.bd_parts`), within a ranking
+screen bank's room (`0x16`, up to `8CA49200`) that a fight doesn't use.
+Moving the tiles to the extension RAM instead crashed at once: the fight's
+sprite code wants them in the main RAM.
+
 ## Sound (`tools/psp/sound.py`)
 
 The voice numbering lines up: every character the two have in common has as
@@ -905,6 +963,10 @@ format. So a new character's voice bank is its PSP samples, converted:
   queue waits forever on them (the hang at Eagle's round-win pose). They're
   written as type 0 on a channel offset (0-2) the character's other records
   don't use; Ingrid's only stop, so they become none.
+- Level: for the characters both have, a voice sample's RMS on the PSP is
+  1.53 times the Dreamcast's (the median; Ryu, Ken, Sagat, Juli alike, from
+  1.0 to 1.9): the new characters' samples are scaled by 1 / 1.53
+  (`sound.GAIN`). Unscaled they came out twice as loud as the Dreamcast's.
 - The common sounds (`SD_SE.BIN`, `SD_NR.BIN`; the PSP's `se_mid.pac`
   `0x80000D00`, `0x80000E00`) are the same apart from a few entries that
   point at the same sounds in other banks; the new characters use the
@@ -927,7 +989,7 @@ her effect objects add small offsets to her base (`p_1C7974`).
 
 ## Gaps
 
-- The move list texture (`0x10000E00`), the PSP's stages and music.
+- The PSP's stages and music.
 - The rest of the character tables (Character tables, above).
 - A ranking entry or saved data naming a PSP character would read past the
   Dreamcast's tables without the add-on.
@@ -950,6 +1012,7 @@ her effect objects add small offsets to her base (`p_1C7974`).
 | `SFA3_WATCH_FROM=frame` | start watching or tracing at that frame |
 | `SFA3_DMA_LOG=1` | log DMA |
 | `SFA3_PAC_LOG=1` | log each archive section as it loads (tag, size, where to) |
+| `SFA3_DISC_DELAY_MS=<ms>` | each disc read takes that long (testing a slow disk's stalls: the audio streams) |
 | `SFA3_SPRITE_LOG=frame` | log that frame's sprite draws: object, bank, part, record, position, animation, caller (`frame+`: from that frame on, 400 lines at most) |
 | control `rtdump <file>` | the read trace (read-trace build only) |
 | control `poke <hex address> <decimal value>` | write a guest byte |

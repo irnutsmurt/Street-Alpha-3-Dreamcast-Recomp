@@ -783,6 +783,36 @@ def emit_c(b, out_dir, patches=(), screens=None):
     return gen.problems, len(chunks)
 
 
+# BDnn.PAC's sprite bank 0x1A (the pre-fight dialogue's extra sprites) loads
+# to fixed places: its tiles to 8CA30000, its parts to 8CA3E000 (the banks'
+# defaults, 8C09AF10 / 8C09AE80 + 4 x bank), loading the parts first. The
+# Dreamcast's biggest tiles are 54278 bytes; the PSP Yun's 86047 ran over his
+# parts (and on): the parts move past the biggest tiles. Up to 8CA49200 the
+# room is a ranking screen bank's (0x16), not in use in a fight. (Moving the
+# tiles to the extension RAM instead crashes: the fight's sprite code wants
+# them in the main RAM.)
+BD_BANK, BD_TILES, BD_PARTS, BD_ROOM_END = 0x1A, 0x8CA30000, 0x8CA3E000, 0x8CA49200
+BANK_PARTS_DEFAULTS = 0x8C09AE80
+
+
+def bd_parts(dc_dir, out_dir, cids):
+    """[(address, bytes)]: bank 0x1A's parts' default place, moved when a new BD file's tiles need it"""
+    tiles = parts = 0
+    for name in [f"BD{c:02X}.PAC" for c in cids] + [n for n in os.listdir(dc_dir) if n.upper().startswith("BD")]:
+        path = os.path.join(out_dir if os.path.exists(os.path.join(out_dir, name)) else dc_dir, name)
+        if not os.path.isfile(path):
+            continue
+        sec = pac_sections(path)
+        tiles = max(tiles, len(sec.get(0x2000000 | BD_BANK, b"")))
+        parts = max(parts, len(sec.get(0x1000000 | BD_BANK, b"")))
+    if BD_TILES + tiles <= BD_PARTS:
+        return []
+    place = (BD_TILES + tiles + 0x7FF) & ~0x7FF
+    assert place + parts <= BD_ROOM_END, f"bank 0x1A: {tiles} bytes of tiles and {parts} of parts don't fit"
+    print(f"bank 0x1A: tiles up to {tiles} bytes: its parts to {place:08X}")
+    return [(BANK_PARTS_DEFAULTS + 4 * BD_BANK, struct.pack("<I", place))]
+
+
 def dc_text(dc_dir, cid, psp_data=None):
     """the Dreamcast character's pre-fight dialogue (word 38, entry 1); for a
     PSP character the PSP's (its bd file's section 0x10001: 128-byte blocks,
@@ -886,6 +916,7 @@ def build(boot_path, psp_data, dc_dir, out_dir, maps, spec="26=26,27=27,28=28,29
     import files
     for name, size in files.build(psp_data, dc_dir, out_dir, [cid for cid, _ in pairs]):
         print(f"{name}: {size} bytes")
+    patches += bd_parts(dc_dir, out_dir, [cid for cid, _ in pairs])
     import ending
     for name, size, template in ending.build(b.boot, psp_data, dc_dir, out_dir, [cid for cid, _ in pairs]):
         print(f"{name}: {size} bytes (the ending code of {template})")

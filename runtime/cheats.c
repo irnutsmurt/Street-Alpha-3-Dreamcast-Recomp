@@ -15,8 +15,13 @@
  * below 0 without a hit leaves the round stuck at KNOCK OUT).
  *
  * World Tour keeps an entry per player side, 0x354 bytes from 0x8C188D48:
- * +0 1 = in use, +8 EXP, +0x0C / +0x10 / +0x14 X-, A-, V-ism EXP. The game
- * works the levels out from these after each fight and saves the entry.
+ * +0 1 = in use, +2 the -ism (sign), +4 the total level - 1, +5 the X-ism
+ * level - 1 (+6, +7 presumably A and V), +8 EXP, +0x0C / +0x10 / +0x14 X-,
+ * A-, V-ism EXP. The game raises a level from these only after a fight won
+ * with that -ism (one win took X-ism from level 1 to 32 with the cheat) and
+ * saves the entry. In a World Tour fight the HUD labels the player I-ISM
+ * (f_8C0630DC: style 3 for a fighter with an entry, fighter +0x2F0), as on
+ * the disc.
  *
  * Final Bison is unlocked by bit 0x800 of 0x8C09B1CA (part of the system
  * data the game saves to the memory card), which the character select checks
