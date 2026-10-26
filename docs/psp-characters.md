@@ -43,8 +43,14 @@ Status (2026-10-25):
   reached in testing).
 - Not yet: the PSP-only command checker Yun uses for command 0x20
   (recompiled; it takes the PSP's default button layout, except in network
-  play, whose per-player state is PSP-only and zeroed), Ingrid's
-  background-scroll variables (PSP-only).
+  play, whose per-player state is PSP-only and zeroed); saved data naming a
+  new character read by a build without the add-on.
+- The three background layers (PSP `0x80F8D0`, `0x80F970`, `0x80FA10`,
+  `0xA0` apart; the Dreamcast's `8C188818`, `8C1888B4`, `8C188950`, `0x9C`
+  apart) are mapped to `+0x20` (manual maps): the routines that set all
+  three (ending objects' and Ingrid's module's: `0x1C966C`, `0x1CA39C`,
+  `0x1CAB80`) wrote PSP-only copies of the first and third, and the third's
+  X went to the first's (a voted map).
 
 ## The PSP program (`BOOT.BIN`)
 
