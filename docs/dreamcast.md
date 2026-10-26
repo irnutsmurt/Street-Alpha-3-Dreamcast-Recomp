@@ -516,11 +516,14 @@ boxes moved after them), parts 0x33-0x36; big portraits bank 8 parts
   5 the palettes; 6-9 the scenes' data; 10 the text records' pointers (the
   count of characters to type, then one or two lines, each an x position
   and its text to a NUL); 11 (texture, palette) pairs to `0xFF` for
-  `f_8C0218B6`; 12 not read.
+  `f_8C0218B6`; 12 the closing screen's logo: its first part in bank
+  `0x19` (read as a u16; `END00` `0x14A`, `END06` `0x189`; the same
+  pixels in every ending).
 - The ending's state is at `8C1A31D4` (+0 character, +2 the scene's event
   index, +4 the scene, +6 a frame count, +`0x3C` the script, `+0x10C`..
   the directory's words 1-10: `+0x110` the 10-byte records' table, `+0x118`
-  the 8-byte ones'). The setup (`8C800160`) puts its object handlers in the
+  the 8-byte ones'; another struct from +`0x138`, `8C1A330C`, that much of
+  the overlay uses). The setup (`8C800160`) puts its object handlers in the
   effect objects' table: types 72-82 at `8C0A900C + 0x120` (nothing there
   otherwise), copies the directory into the state and calls `f_8C0218B6`.
   Actors are effect objects (pool A) made from the actor records
@@ -542,6 +545,18 @@ boxes moved after them), parts 0x33-0x36; big portraits bank 8 parts
   is 0); `f_8C018E9C` a part: object +`0x94` set draws the fighters' way
   (32x32 tiles), else through the cached textures (`f_8C01A282` finds one,
   `f_8C01A15E` makes one, `f_8C01A314` streams 16x16 tiles).
+- An object's draw mode is +`0x84`: `8C01781C` calls `8C099D38[mode]`
+  (0 `f_8C01788E` the animation's pose, 1/2 `8C017900`, 3 `8C0179F2` the
+  pose from part +`0x44` (u16; bit 15 set: nothing), 4 `8C017A66`, ...).
+- The closing screen: after the scenes the overlay's step `8C800C00` runs
+  `8C80A234[+2]`; its first (`8C800C30`) makes object type 76 and waits
+  `0x12C` frames. Type 76 (`8C807050`): bank `0x19`, mode 3, part = the
+  directory's word 12 (`8C8109B8` in END06's layout), at (`0xC0`, `0x38`),
+  palette slot 0 from the overlay's data (`8C80AC64`, `f_8C015AF6`: 16
+  colours to `8C1A2174` + 32 x slot); then THANK YOU FOR PLAYING, PRESENTED
+  BY and the url (the overlay's strings at `0x98F8`, `0x9910`, `0x9920`)
+  by `f_8C01532A`.
+- The staff roll's names are in every overlay too (`0x9B9C` on).
 
 ## Main loop and rendering
 

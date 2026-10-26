@@ -30,6 +30,10 @@ RODATA, DATA = 0x1F8FF0, 0x1FEDE0   # .rodata (no relocations in it) and .data
 BSS_START, SEG1_LOW = 0x2D4FC0, 0x1000000
 
 
+# instructions given other C than their own: {PSP address: C} (the add-on's changes: build_char.py)
+REPLACE = {}
+
+
 class Boot:
     """The PSP program (BOOT.BIN) and its relocations."""
     def __init__(self, path):
@@ -220,6 +224,8 @@ class Gen:
 
     def op(self, a, i):
         """C for a non-control-flow instruction"""
+        if a in REPLACE:
+            return REPLACE[a]
         n, rs, rt, rd = i.name, i.rs, i.rt, i.rd
         R, S = reg, s32
         rel = self.boot.text_rel.get(a)

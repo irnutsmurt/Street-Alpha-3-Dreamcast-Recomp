@@ -231,7 +231,8 @@ void hle_layout_draw_set(void) {
  * they draw (ending_draw).
  * An ending the add-on built marks itself: the word 12 of its directory (the
  * overlay's literal at 8C800328) points at "PSPE", 0x20001's records' start
- * and end. f_8C024AD4(object, record) starts an animation. */
+ * and end, the closing logo's part. f_8C024AD4(object, record) starts an
+ * animation. */
 #define OVERLAY_A 0x8C800000u
 #define OVERLAY_A_SIZE 0x12000u   /* to the ending's bank 0x19 tiles */
 #define ENDING_DIR 0x8C800328u
@@ -282,6 +283,14 @@ void hle_ending_setup(void) {
         logf_("ending: the PSP's object handlers (types 72-80)");
     }
     f_8C0218B6_orig();
+}
+
+/* the closing screen's logo (its object, type 76, +0x44: the first part of its pose in bank 0x19; the
+ * Dreamcast's handler reads the directory's word 12): the recompiled PSP handler's, from the mark
+ * (tools/psp/build_char.py ENDING_REPLACE; the PSP's own read gave its ending state's +0x138) */
+uint32_t psp_ending_logo(void) {
+    uint32_t mark = ending_mark();
+    return mark ? R32(mark + 12) : 0x8000u;  /* bit 15: none */
 }
 
 /* f_8C018E9C (a part of obj drawn): in an ending the add-on built, an

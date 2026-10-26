@@ -61,6 +61,7 @@ void psp_call_dc(uint32_t dc_addr);
 void psp_icall(uint32_t addr);
 void psp_unmapped(uint32_t psp_addr);
 void psp_bad(uint32_t psp_addr);
+uint32_t psp_ending_logo(void);  /* psp_load.c: the closing screen's logo's part (build_char.py ENDING_REPLACE) */
 uint32_t psp_ext_load(uint32_t a, int size);
 void psp_ext_store(uint32_t a, uint32_t v, int size);
 uint32_t psp_lwl(uint32_t a, uint32_t old);
