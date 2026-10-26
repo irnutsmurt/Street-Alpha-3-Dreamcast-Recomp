@@ -491,6 +491,58 @@ boxes moved after them), parts 0x33-0x36; big portraits bank 8 parts
   (2 x `0x354`); the versus select screen shows them in its last row
   (Select screens).
 
+## Arcade endings
+
+- The arcade's stage counter is `8C17FC97` (0-9; `8C17FC74` follows it);
+  after the last stage's win the ending task `f_8C025ECA` runs:
+  `f_8C01BA82` loads `endNN.bin` (the template `end00.bin` at `8C095F8C`,
+  the character's hex digits put in) to `8C800000`, the overlay slot A, and
+  `names[8C09AC12[character]]` (`ENDnn.PAC`); the character is the u16 at
+  `8C1A31D4` (`8C17FC92`, with special cases: Bison's and Shin Akuma's
+  endings, the second Chun-Li / Sodom / Gen / Balrog files as the first's).
+  Then each frame runs the overlay (`f_8C0103FA(8C800000)`); `8C17FCA5` 2+
+  runs `f_8C08FDA4` instead.
+- Every ending overlay is the same code (to `0xBD08`, 624 functions), then
+  the character's data, a directory of it (13 words; its address is the
+  code's literal at `0x328`), the overlay's variables (zero in the file) and
+  a few library routines (memcpy and the like). The code refers past
+  `0xBD08` only to the directory, the variables and the routines (26 literal
+  words; `END07` and `END10` also set two words at `0x6ED8`). Directory: 0
+  the script; 1 the actors (a list per scene of 32-byte records: byte 0 the
+  object type (& `0x7F`; bit 7 the list's last), 1 the sub-type, 3 the
+  first animation, 6 the palette base, 31 the character the actor is); 2 /
+  4 pointer tables to the animation records (10-byte: duration, flags,
+  pose u16 at +4, next s16 at +6) and to 8-byte ones (images); 3 positions;
+  5 the palettes; 6-9 the scenes' data; 10 the text records' pointers (the
+  count of characters to type, then one or two lines, each an x position
+  and its text to a NUL); 11 (texture, palette) pairs to `0xFF` for
+  `f_8C0218B6`; 12 not read.
+- The ending's state is at `8C1A31D4` (+0 character, +2 the scene's event
+  index, +4 the scene, +6 a frame count, +`0x3C` the script, `+0x10C`..
+  the directory's words 1-10: `+0x110` the 10-byte records' table, `+0x118`
+  the 8-byte ones'). The setup (`8C800160`) puts its object handlers in the
+  effect objects' table: types 72-82 at `8C0A900C + 0x120` (nothing there
+  otherwise), copies the directory into the state and calls `f_8C0218B6`.
+  Actors are effect objects (pool A) made from the actor records
+  (`8C80142A`), bank `0x19` (+`0x46`), the character at +`0x39`.
+- Animations: `f_8C024AD4(object, record)` starts one (the record at
+  +`0x1C`, its first 4 bytes to +`0x3A`), `f_8C0249E0` the 8-byte kind,
+  `f_8C024B1A` steps a frame; the overlay's `8C806DF2` (and copies at
+  `8C8087AA`, `8C80919E`) start one from the 10-byte records' table,
+  `8C808790` from the 8-byte.
+- `ENDnn.PAC`: section 0 and textures `0xC00`-`0xC16` the same in every
+  ending, `0x10` (per character), the character's textures from `0xC17`
+  (PVR, twiddled: ARGB1555 or 4-bit palettized), `0x900` the text in
+  Japanese, sprite bank `0x19` (parts to `8C8E2000`, tiles to `8C812000`:
+  over the overlay slots B and C). The Dreamcast's endings carry copies of
+  the fighters' sprites (and the effects') in bank `0x19`; the fighters' own
+  banks (0 and 1: `8C1A1F48`) are still loaded then.
+- Drawing: `f_8C01788E(-, object)` draws a pose (bank +`0x46`'s parts from
+  `8C1A1F48`, the pose a run of 12-byte part records to the one whose +10
+  is 0); `f_8C018E9C` a part: object +`0x94` set draws the fighters' way
+  (32x32 tiles), else through the cached textures (`f_8C01A282` finds one,
+  `f_8C01A15E` makes one, `f_8C01A314` streams 16x16 tiles).
+
 ## Main loop and rendering
 
 `f_8C010424` main loop; tasks `f_8C0259C8` / `f_8C025A90`; the fight's

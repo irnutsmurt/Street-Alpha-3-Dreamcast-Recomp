@@ -24,6 +24,10 @@ REL_DATA = (0x353CD0, 0x31E00)
 R_MIPS_32, R_MIPS_26, R_MIPS_HI16, R_MIPS_LO16 = 2, 4, 5, 6
 TEXT_END = 0x1F8354
 RODATA, DATA = 0x1F8FF0, 0x1FEDE0   # .rodata (no relocations in it) and .data
+# Segment 1 (.bss) is relocated relative to 0x2D4F30: its addresses are offsets into it (0-0xA4D4E4),
+# which the tools use as they are. Those below the .bss's start (0x2D4FC0) would read as segment 0's
+# (code, data): moved out of their way to SEG1_LOW + offset.
+BSS_START, SEG1_LOW = 0x2D4FC0, 0x1000000
 
 
 class Boot:
@@ -31,14 +35,29 @@ class Boot:
     def __init__(self, path):
         self.data = open(path, "rb").read()
         self.text_rel = {}
+        self.text_seg1 = set()   # relocated instructions whose address is in segment 1
         for k in range(0, REL_TEXT[1], 8):
             o, info = struct.unpack_from("<II", self.data, REL_TEXT[0] + k)
             self.text_rel[o] = info & 0xFF
+            if (info >> 16) & 0xFF == 1:
+                self.text_seg1.add(o)
         self.data_ptrs = set()
+        self.data_seg1 = set()
         for k in range(0, REL_DATA[1], 8):
             o, info = struct.unpack_from("<II", self.data, REL_DATA[0] + k)
             if info & 0xFF == R_MIPS_32:
                 self.data_ptrs.add(o)
+                if (info >> 16) & 0xFF == 1:
+                    self.data_seg1.add(o)
+
+    def canon(self, v, a):
+        """the address the instruction at a builds (value v): a low segment 1 one moved to SEG1_LOW"""
+        return v + SEG1_LOW if a in self.text_seg1 and v < BSS_START else v
+
+    def ptr(self, p):
+        """the pointer at p in the data (a low segment 1 one moved to SEG1_LOW)"""
+        v = self.u32(p)
+        return v + SEG1_LOW if p in self.data_seg1 and v < BSS_START else v
 
     def u32(self, a):
         return struct.unpack_from("<I", self.data, a + OFF)[0]
@@ -184,11 +203,15 @@ class Gen:
             s = ";"
         return s + (" return;" if tail else "")
 
+    def xa(self, a):
+        """the address translation for the address-forming instruction at a (psp_xa1: segment 1's)"""
+        return "psp_xa1" if a in self.boot.text_seg1 else "psp_xa"
+
     def addr(self, a, i):
         """address expression for a load / store at a"""
         rel = self.boot.text_rel.get(a)
         if rel == R_MIPS_LO16:
-            return f"psp_xa({reg(i.rs)} + {i.imm}u)"
+            return f"{self.xa(a)}({reg(i.rs)} + {i.imm}u)"
         if i.rs == 29:
             return f"g.r[15] + {i.imm}u"
         if i.rs == 0:
@@ -209,7 +232,7 @@ class Gen:
             return w(rt, f"0x{(i.imm << 16) & 0xFFFFFFFF:08X}u")
         if n in ("addiu", "addi"):
             if rel == R_MIPS_LO16:
-                return w(rt, f"psp_xa({R(rs)} + {i.imm}u)")
+                return w(rt, f"{self.xa(a)}({R(rs)} + {i.imm}u)")
             if rs == 0:
                 return w(rt, f"{i.imm & 0xFFFFFFFF}u")
             if rs == 29 or rt == 29:
@@ -217,7 +240,7 @@ class Gen:
             return w(rt, f"psp_add({R(rs)}, {i.imm})")
         if n == "ori":
             if rel == R_MIPS_LO16:
-                return w(rt, f"psp_xa({R(rs)} | {i.imm}u)")
+                return w(rt, f"{self.xa(a)}({R(rs)} | {i.imm}u)")
             return w(rt, f"{R(rs)} | {i.imm}u")
         if n == "andi":
             return w(rt, f"{R(rs)} & {i.imm}u")
@@ -459,7 +482,7 @@ class Gen:
                 self.table_defs = getattr(self, "table_defs", [])
                 self.table_defs.append(f"static const uint32_t {arr}[{len(entries)}] = {{" +
                                        ", ".join(f"0x{e:06X}u" for e in entries) + "};")
-            old = f"{reg(i.rt)} = psp_lw(psp_xa({reg(i.rs)} + {i.imm}u));"
+            old = f"{reg(i.rt)} = psp_lw({self.xa(lw_at)}({reg(i.rs)} + {i.imm}u));"
             new = (f"{reg(i.rt)} = {arr}[(({reg(i.rs)} + {i.imm}u) - 0x{table:06X}u) >> 2 < {len(entries)}u ? "
                    f"(({reg(i.rs)} + {i.imm}u) - 0x{table:06X}u) >> 2 : 0];")
             text = text.replace(old, new)

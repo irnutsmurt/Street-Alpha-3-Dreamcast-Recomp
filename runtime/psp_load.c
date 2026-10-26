@@ -217,6 +217,84 @@ void hle_layout_draw_set(void) {
     }
 }
 
+/* --- the PSP characters' endings (tools/psp/ending.py) ---
+ * The PSP's ending draws its actors with the fighters' own sprites: an
+ * actor's character (object +0x39, from its record) picks the bank (+0x46)
+ * of the fighter with that character each time an animation from section
+ * 0x20001 starts, and that fighter's +0x9B; a character neither fighter is
+ * (a cameo, its sprites at the end of the player's file) takes the bank of
+ * the fighter that isn't M.Bison (the PSP's 0x1D4C40, offsets +0x56 and
+ * +0xAB there). The Dreamcast's own endings have copies in bank 0x19 instead.
+ * The fighters' sprites have 32x32 tiles: object +0x94 set draws by the
+ * fighters' way (the PSP's +0xA4, set to 1 with the bank). Objects that
+ * take a parent's bank (the PSP's spawners copy both) get the flag when
+ * they draw (ending_draw).
+ * An ending the add-on built marks itself: the word 12 of its directory (the
+ * overlay's literal at 8C800328) points at "PSPE", 0x20001's records' start
+ * and end. f_8C024AD4(object, record) starts an animation. */
+#define OVERLAY_A 0x8C800000u
+#define OVERLAY_A_SIZE 0x12000u   /* to the ending's bank 0x19 tiles */
+#define ENDING_DIR 0x8C800328u
+#define ENDING_MARK 0x45505350u   /* "PSPE" */
+#define FIGHTERS 0x8C17FD38u
+#define FIGHTER_SIZE 0x44Cu
+#define BISON 0x0Au
+/* the mark of an ending the add-on built (at 8C800000 now), or 0 */
+static uint32_t ending_mark(void) {
+    uint32_t dir = R32(ENDING_DIR);
+    uint32_t mark = dir - OVERLAY_A < OVERLAY_A_SIZE ? R32(dir + 48) : 0;
+    return mark - OVERLAY_A < OVERLAY_A_SIZE && R32(mark) == ENDING_MARK ? mark : 0;
+}
+
+void f_8C024AD4_orig(void);
+void hle_ending_anim(void) {
+    uint32_t obj = g.r[4], rec = g.r[5], mark;
+    if (rec - OVERLAY_A < OVERLAY_A_SIZE && (mark = ending_mark()) &&
+        rec - R32(mark + 4) < R32(mark + 8) - R32(mark + 4)) {
+        uint32_t c = R8(obj + 0x39), p1 = FIGHTERS, p2 = FIGHTERS + FIGHTER_SIZE, f = 0;
+        if (c == R8(p2 + 0x132)) f = p2;
+        else if (c == R8(p1 + 0x132)) f = p1;
+        if (f) W8(obj + 0x9B, R8(f + 0x9B));
+        else f = R8(p1 + 0x132) == BISON ? p2 : p1;
+        W16(obj + 0x46, R16(f + 0x46));
+        W32(obj + 0x94, 1);
+    }
+    f_8C024AD4_orig();
+}
+
+/* f_8C0218B6(list) sets up textures from (texture, palette) pairs; the ending's setup calls it once
+ * its object handlers are in the effect objects' table (types 72-82 at 8C0A900C + 0x120: nothing
+ * there before an ending). An ending the add-on built gets the PSP's for 72-80 (its engine,
+ * recompiled: tools/psp/build_char.py ENDING_HANDLERS) */
+#define EFFECT_HANDLERS 0x8C0A900Cu
+#define ENDING_FIRST_TYPE 72u
+extern const uint32_t g_psp_ending_handlers[9];
+/* and the handlers of objects it makes that a character file registers during a fight (not loaded
+ * then): Ingrid's effect (table, type, stub) */
+extern const uint32_t g_psp_ending_objects[][3];
+extern const unsigned g_psp_ending_object_count;
+void f_8C0218B6_orig(void);
+void hle_ending_setup(void) {
+    if (g_psp_ending_handlers[0] && ending_mark()) {
+        for (uint32_t k = 0; k < 9; k++) W32(EFFECT_HANDLERS + 4 * (ENDING_FIRST_TYPE + k), g_psp_ending_handlers[k]);
+        for (unsigned k = 0; k < g_psp_ending_object_count; k++)
+            W32(g_psp_ending_objects[k][0] + 4 * g_psp_ending_objects[k][1], g_psp_ending_objects[k][2]);
+        logf_("ending: the PSP's object handlers (types 72-80)");
+    }
+    f_8C0218B6_orig();
+}
+
+/* f_8C018E9C (a part of obj drawn): in an ending the add-on built, an
+ * object with a fighter's bank draws by the fighters' way */
+void ending_draw(uint32_t obj) {
+    uint32_t bank = R16(obj + 0x46);
+    if (bank != R16(FIGHTERS + 0x46) && bank != R16(FIGHTERS + FIGHTER_SIZE + 0x46)) return;
+    if (R32(obj + 0x94) || obj - FIGHTERS < 4 * FIGHTER_SIZE || !ending_mark()) return;
+    static int logged;
+    if (logged++ < 10) logf_("ending: object %08X (bank %X) draws by the fighters' way", obj, bank);
+    W32(obj + 0x94, 1);
+}
+
 /* --- the use counters ---
  * f_8C069DCC(fighter) counts a character's games by -ism: 8C09B20C, 8 bytes a
  * character (u16 per -ism), part of the system data saved to the memory

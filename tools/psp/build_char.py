@@ -26,7 +26,7 @@ sys.path.insert(0, HERE)
 
 import chartables  # noqa: E402
 import mips  # noqa: E402
-from mipsgen import Boot, Function, Gen, R_MIPS_HI16, R_MIPS_LO16, TEXT_END  # noqa: E402
+from mipsgen import RODATA, Boot, Function, Gen, R_MIPS_HI16, R_MIPS_LO16, SEG1_LOW, TEXT_END  # noqa: E402
 
 SLOT_BASE, SLOT_SIZE = 0x8C800000, 0x14000
 DATA, DATA_END = 0x1FEDE0, 0x1FEDE0 + 0xD6138
@@ -39,6 +39,15 @@ LAST_CODE_END = 0x1CB124             # Ingrid's code ends here (a PSP-only modul
 # engine code the Dreamcast's engine runs for these characters (runtime/psp.c): none so far (the
 # CPU script command the PSP added is run through the Dreamcast's: hle_ai_step)
 ENGINE_ROOTS = ()
+# the PSP's ending engine (ending.py): the handlers of its object types 72-80 (as its ending setup,
+# 0x1DB21C, installs them) run for the PSP characters' endings in place of the Dreamcast's. The
+# character files aren't loaded then (the ending's overlay and sprites are where they go): what these
+# reach (stubs and PSP data) goes to the extension RAM instead, written at boot
+ENDING_HANDLERS = (0x1C901C, 0x1C9248, 0x1CB124, 0x1CB574, 0x1D548C, 0x1D5594, 0x1CB384, 0x1D5994, 0x1D81A8)
+EXT_ENDING, EXT_ENDING_END = 0x98F00000, 0x99000000
+# objects the ending engine makes whose handlers a character file registers during a fight (not loaded
+# then): Ingrid's effect (0x1C8EC0: type 58 in pool D, handler 0x1C8F08). (Dreamcast table, type, handler)
+ENDING_OBJECTS = ((0x8C0A9278, 58, 0x1C8F08),)
 LAST_DATA_END = 0x2B2310             # and her data (the module's tables follow)
 BSS, BSS_END = 0x2D4FC0, 0x2D4FC0 + 0xA4D454
 EXT_PSP_VARS, EXT_PSP_VARS_END = chartables.EXT_END, 0x98F00000  # PSP-only variables (extension RAM, zeroed at boot)
@@ -46,6 +55,12 @@ PSP_FIGHTERS, PSP_FIGHTERS_END = 0x80AF70, 0x80AF70 + 4 * 0x498
 PSP_POOLS, PSP_POOLS_END = 0xA39840, 0xA3E7C0
 PSP_SHOTS = 0xA37080                  # projectiles, then the effect pools
 PALETTES = (0x2C7F00, 0x2C8500)          # effect palettes the PSP shares between characters
+
+
+def is_data(a):
+    """the PSP's data (.rodata too: strings the ending engine draws) or variables (segment 1's low
+    addresses moved to SEG1_LOW: mipsgen.Boot.canon)"""
+    return RODATA <= a < BSS_END or SEG1_LOW <= a < SEG1_LOW + BSS
 
 
 def descriptors(boot):
@@ -107,7 +122,7 @@ class Character:
             seen.add(a)
             for k in range(0, 0x200, 4):
                 if a + k in b.data_ptrs:
-                    v = b.u32(a + k)
+                    v = b.ptr(a + k)
                     if DATA <= v < DATA_END:
                         todo.append(v)
         lo, hi = min(seen), max(seen) + 0x200
@@ -123,7 +138,7 @@ class Character:
             if rel == R_MIPS_HI16:
                 his[i.rt] = i.imm << 16
             elif rel == R_MIPS_LO16 and i.rs in his:
-                out.add((his[i.rs] + i.imm) & 0xFFFFFFFF)
+                out.add(b.canon((his[i.rs] + i.imm) & 0xFFFFFFFF, a))
         return out
 
     def find_entry(self):
@@ -234,9 +249,9 @@ class Build:
                 elif rel == R_MIPS_LO16:
                     i = self.boot.insn(a)
                     if i.rs in his:
-                        refs.add((his[i.rs] + i.imm) & 0xFFFFFFFF)
-            refs |= {self.boot.u32(p) for p in self.boot.data_ptrs}
-            self._refs = sorted(r for r in refs if DATA <= r < BSS_END)
+                        refs.add(self.boot.canon((his[i.rs] + i.imm) & 0xFFFFFFFF, a))
+            refs |= {self.boot.ptr(p) for p in self.boot.data_ptrs}
+            self._refs = sorted(r for r in refs if is_data(r))
         return self._refs
 
     def extent(self, a):
@@ -253,8 +268,8 @@ class Build:
             todo += [c.dw[k] for k in CODE_WORDS if c.dw[k]] + [c.entry] + sorted(c.function_pointers())
             todo += [a for a in c.code_refs() if 0x1000 <= a < TEXT_END]
             lo, hi = c.own
-            data += [(self.boot.u32(a), 0) for a in range(lo, hi, 4) if a in self.boot.data_ptrs]
-        todo += list(ENGINE_ROOTS)
+            data += [(self.boot.ptr(a), 0) for a in range(lo, hi, 4) if a in self.boot.data_ptrs]
+        todo += list(ENGINE_ROOTS) + list(ENDING_HANDLERS) + [h for _, _, h in ENDING_OBJECTS]
         taken = set(todo)
         engine_recompiled = set()
         seen = set()
@@ -262,7 +277,7 @@ class Build:
         while todo or data:
             if not todo:
                 a, depth = data.pop()
-                if a in seen or self.global_dc(a) is not None or self.in_own(a) or not DATA <= a < BSS_END:
+                if a in seen or self.global_dc(a) is not None or self.in_own(a) or not is_data(a):
                     continue
                 if PSP_FIGHTERS <= a < PSP_FIGHTERS_END or PSP_SHOTS <= a < PSP_POOLS_END:
                     continue  # the object arrays: translated as the code runs (psp.c)
@@ -283,7 +298,7 @@ class Build:
                     continue
                 for p in range(a & ~3, hi, 4):
                     if p in self.boot.data_ptrs:
-                        v = self.boot.u32(p)
+                        v = self.boot.ptr(p)
                         if 0x1000 <= v < TEXT_END:
                             # a character's code; or engine code with no counterpart in a table the
                             # recompiled code reads directly (a handler table); else its counterpart
@@ -312,7 +327,7 @@ class Build:
                 if rel == R_MIPS_HI16:
                     his[i.rt] = i.imm << 16
                 elif rel == R_MIPS_LO16 and i.rs in his:
-                    v = (his[i.rs] + i.imm) & 0xFFFFFFFF
+                    v = self.boot.canon((his[i.rs] + i.imm) & 0xFFFFFFFF, x)
                     if 0x1000 <= v < TEXT_END:
                         if v not in f.addrs:
                             todo.append(v)
@@ -330,29 +345,124 @@ class Build:
                 return dc + (a - lo)
         return None
 
-    def layout(self):
-        """offsets of everything in a character file"""
-        self.stub_off = {a: 8 + 8 * k for k, a in enumerate(self.taken)}
-        self.shared_off = {}
-        off = 8 + 8 * len(self.taken)
-        # the PSP data copied (collect()), on 4-byte boundaries
-        ranges = [[lo & ~3, (hi + 3) & ~3] for lo, hi in self.copies]
-        # the shared palettes are copied whole
-        ranges = [[min(lo, PALETTES[0]) if PALETTES[0] <= lo < PALETTES[1] else lo,
-                   max(hi, PALETTES[1]) if PALETTES[0] <= lo < PALETTES[1] else hi] for lo, hi in ranges]
-        merged = []
-        for lo, hi in sorted(ranges):
-            if merged and lo <= merged[-1][1]:
-                merged[-1][1] = max(merged[-1][1], hi)
+    def ending_reach(self):
+        """the functions and the PSP data copies the ending handlers reach"""
+        funcs, datas = set(), set()
+        copies = sorted(self.copies)
+        todo = list(ENDING_HANDLERS) + [h for _, _, h in ENDING_OBJECTS]
+        while todo:
+            x = todo.pop()
+            if x in self.funcs:
+                if x in funcs:
+                    continue
+                funcs.add(x)
+                f = self.funcs[x]
+                his = {}
+                for p in f.addrs:
+                    i = self.boot.insn(p)
+                    rel = self.boot.text_rel.get(p)
+                    if i.name in ("jal", "j") and i.target is not None and i.target not in f.addrs:
+                        todo.append(i.target)
+                    if rel == R_MIPS_HI16:
+                        his[i.rt] = i.imm << 16
+                    elif rel == R_MIPS_LO16 and i.rs in his:
+                        todo.append(self.boot.canon((his[i.rs] + i.imm) & 0xFFFFFFFF, p))
+                continue
+            k = bisect.bisect_right(copies, (x, 0xFFFFFFFF)) - 1
+            if 0 <= k and copies[k][0] <= x < copies[k][1]:
+                piece = copies[k]
+            elif self.in_own(x) and x not in self.own_pieces:
+                # a character's own data the ending engine uses too (Ingrid's module and the ending
+                # share code and tables): a piece of it in the extension RAM as well
+                piece = (x, min(self.extent(x), next(hi for lo, hi in (c.own for c in self.chars) if lo <= x < hi)))
+                self.own_pieces[x] = piece
             else:
-                merged.append([lo, hi])
-        ranges = merged
+                continue
+            if piece in datas:
+                continue
+            datas.add(piece)
+            for p in range(piece[0] & ~3, piece[1], 4):
+                if p in self.boot.data_ptrs:
+                    todo.append(self.boot.ptr(p))
+        return funcs, datas
+
+    def layout(self):
+        """offsets of everything in a character file; and the ending engine's part in the extension RAM"""
+        self.own_pieces = {}
+        self.ending_funcs, ending_copies = self.ending_reach()
+        slot_taken = [a for a in self.taken if a not in self.ending_funcs]
+        abs_taken = [a for a in self.taken if a in self.ending_funcs]
+        self.stub_off = {a: 8 + 8 * k for k, a in enumerate(slot_taken)}
+        self.abs_stub = {a: EXT_ENDING + 8 * k for k, a in enumerate(abs_taken)}
+        self.shared_off = {}
+
+        def merged(copies):
+            # on 4-byte boundaries; the shared palettes are copied whole
+            ranges = [[lo & ~3, (hi + 3) & ~3] for lo, hi in copies]
+            ranges = [[min(lo, PALETTES[0]) if PALETTES[0] <= lo < PALETTES[1] else lo,
+                       max(hi, PALETTES[1]) if PALETTES[0] <= lo < PALETTES[1] else hi] for lo, hi in ranges]
+            out = []
+            for lo, hi in sorted(ranges):
+                if out and lo <= out[-1][1]:
+                    out[-1][1] = max(out[-1][1], hi)
+                else:
+                    out.append([lo, hi])
+            return out
+        # the PSP data copied (collect()): into every character file, or the ending engine's into the extension RAM
         self.shared = []
-        off = (off + 15) & ~15
-        for lo, hi in ranges:
+        off = (8 + 8 * len(slot_taken) + 15) & ~15
+        for lo, hi in merged(c for c in self.copies if c not in ending_copies):
             self.shared.append((lo, hi, off))
             off += hi - lo
         self.common_end = off
+        self.abs_shared = []
+        at = (EXT_ENDING + 8 * len(abs_taken) + 15) & ~15
+        for lo, hi in merged(ending_copies):
+            self.abs_shared.append((lo, hi, at))
+            at += hi - lo
+        self.abs_end = at
+        if at > EXT_ENDING_END:
+            raise SystemExit(f"the ending engine's stubs and data outgrew their room: {at - EXT_ENDING:#x} bytes")
+
+    def abs_xa(self, v):
+        """a PSP pointer in the ending engine's data -> Dreamcast (or None)"""
+        for lo, hi, addr in self.abs_shared:
+            if lo <= v < hi:
+                return addr + (v - lo)
+        if 0x1000 <= v < TEXT_END:
+            if v in self.abs_stub:
+                return self.abs_stub[v]
+            if v in self.fmap and not self.is_char_code(v):
+                return self.fmap[v]
+            return None
+        g = self.global_dc(v)
+        if g is not None:
+            return g
+        if PSP_FIGHTERS <= v < PSP_FIGHTERS_END and (v - PSP_FIGHTERS) % 0x498 == 0:
+            return 0x8C17FD38 + (v - PSP_FIGHTERS) // 0x498 * 0x44C  # a fighter
+        return None
+
+    def ending_area(self):
+        """the ending engine's stubs and PSP data, for the extension RAM at EXT_ENDING"""
+        out = bytearray(self.abs_end - EXT_ENDING)
+        fidx = {a: k for k, a in enumerate(self.order)}
+        for a, addr in self.abs_stub.items():
+            out[addr - EXT_ENDING:addr - EXT_ENDING + 8] = stub(fidx[a])
+        for lo, hi, addr in self.abs_shared:
+            off = addr - EXT_ENDING
+            out[off:off + hi - lo] = self.boot.data[lo + 0x74:hi + 0x74]
+            if PALETTES[0] <= lo < PALETTES[1]:  # PSP colours are ABGR1555, the Dreamcast's ARGB1555
+                for k in range(off, off + hi - lo - 1, 2):
+                    v = struct.unpack_from("<H", out, k)[0]
+                    struct.pack_into("<H", out, k, (v & 0x83E0) | ((v & 0x1F) << 10) | ((v >> 10) & 0x1F))
+            for a in range(lo, hi, 4):
+                if a in self.boot.data_ptrs:
+                    v = self.abs_xa(self.boot.ptr(a))
+                    if v is None:
+                        self.problems.append(f"ending: pointer {self.boot.ptr(a):06X} at {a:06X} with no counterpart")
+                        v = 0
+                    struct.pack_into("<I", out, off + a - lo, v)
+        return bytes(out)
 
     def in_own(self, a):
         return any(c.own[0] <= a < c.own[1] for c in self.chars)
@@ -369,7 +479,7 @@ class Build:
                 if rel == R_MIPS_HI16:
                     his[i.rt] = i.imm << 16
                 elif rel == R_MIPS_LO16 and i.rs in his:
-                    out.add((his[i.rs] + i.imm) & 0xFFFFFFFF)
+                    out.add(self.boot.canon((his[i.rs] + i.imm) & 0xFFFFFFFF, x))
         return out
 
 
@@ -490,6 +600,9 @@ class Writer:
         """a PSP pointer in data -> Dreamcast, for the file in this slot"""
         b, c = self.b, self.c
         base = SLOT_BASE + slot * SLOT_SIZE
+        for slo, shi, addr in b.abs_shared:
+            if slo <= v < shi:
+                return addr + (v - slo)
         lo, hi = c.own
         if lo <= v < hi:
             return base + self.own_off + (v - lo)
@@ -497,6 +610,8 @@ class Writer:
             if slo <= v < shi:
                 return base + off + (v - slo)
         if 0x1000 <= v < TEXT_END:
+            if v in b.abs_stub:
+                return b.abs_stub[v]
             if v in b.stub_off:
                 return base + b.stub_off[v]
             if v in b.fmap and not b.is_char_code(v):
@@ -551,7 +666,7 @@ class Writer:
                     struct.pack_into("<H", out, k, (v & 0x83E0) | ((v & 0x1F) << 10) | ((v >> 10) & 0x1F))
             for a in range(lo, hi, 4):
                 if a in b.boot.data_ptrs:
-                    struct.pack_into("<I", out, off + a - lo, self.xa(b.boot.u32(a), slot))
+                    struct.pack_into("<I", out, off + a - lo, self.xa(b.boot.ptr(a), slot))
         for lo, hi, off in b.shared:
             copy(lo, hi, off, palette=PALETTES[0] <= lo < PALETTES[1])
         lo, hi = c.own
@@ -602,11 +717,25 @@ def emit_c(b, out_dir, patches=(), screens=None):
         with open(os.path.join(out_dir, f"psp_code_{k}.c"), "w") as f:
             f.write("\n".join(head + protos + [""] + tables + [""] + ch) + "\n")
     regions = [(PSP_FIGHTERS, PSP_FIGHTERS_END, "PSP_R_FIGHTERS", 0), (PSP_SHOTS, PSP_POOLS_END, "PSP_R_POOLS", 0)]
-    regions += [(lo, hi, "PSP_R_LINEAR", dc) for lo, hi, dc in b.gsegs]
+    # the object arrays are translated field by field (psp.c): no voted globals inside them (a region
+    # starting there would hide the array's for the addresses after it: the lookup takes the last
+    # region starting at or below an address)
+    arrays = ((PSP_FIGHTERS, PSP_FIGHTERS_END), (PSP_SHOTS, PSP_POOLS_END))
+    regions += [(lo, hi, "PSP_R_LINEAR", dc) for lo, hi, dc in b.gsegs
+                if not any(a <= lo < z for a, z in arrays)]
     regions += [(lo, hi, "PSP_R_SLOT", off) for lo, hi, off in b.shared]
-    regions += [(c.own[0], c.own[1], "PSP_R_SLOT", b.common_end) for c in b.chars]
+    regions += [(lo, hi, "PSP_R_LINEAR", addr) for lo, hi, addr in b.abs_shared]
+    for c in b.chars:  # its own data, but for the pieces in the extension RAM
+        lo, hi = c.own
+        cuts = sorted((max(a, lo), min(z, hi)) for a, z, _ in b.abs_shared if a < hi and z > lo)
+        at = lo
+        for a, z in cuts + [(hi, hi)]:
+            if a > at:
+                regions.append((at, a, "PSP_R_SLOT", b.common_end + (at - lo)))
+            at = max(at, z)
     regions.sort()
     code = {a: off | 1 for a, off in b.stub_off.items()}
+    code.update(b.abs_stub)
     for p, d in b.fmap.items():
         if p not in code and not b.is_char_code(p):
             code[p] = d
@@ -630,6 +759,13 @@ def emit_c(b, out_dir, patches=(), screens=None):
         f.write(f"const uint32_t g_psp_vs_palette_shift = {screens['vs_palette_shift']};\n")
         rows = ", ".join("{" + ", ".join(f"0x{v:X}u" for v in four) + "}" for four in screens.get("hud_parts", ()))
         f.write(f"const uint16_t g_psp_hud_parts[4][4] = {{{rows or '{0}'}}};\n")
+        # the PSP's ending object handlers (types 72-80): their stubs (psp_load.c installs them)
+        f.write("const uint32_t g_psp_ending_handlers[9] = {" +
+                ", ".join(f"0x{b.abs_stub.get(a, 0):08X}u" for a in ENDING_HANDLERS) + "};\n")
+        moved = {t.dc: t.ext for t in chartables.layout()}
+        rows = "".join(f"    {{0x{moved.get(t, t):08X}u, {ty}u, 0x{b.abs_stub.get(h, 0):08X}u}},\n" for t, ty, h in ENDING_OBJECTS)
+        f.write("const uint32_t g_psp_ending_objects[][3] = {\n" + rows + "    {0, 0, 0}};\n")
+        f.write(f"const unsigned g_psp_ending_object_count = {len(ENDING_OBJECTS)};\n")
     return gen.problems, len(chunks)
 
 
@@ -672,7 +808,8 @@ def main():
         b.add_char(cid)
     b.collect()
     b.layout()
-    print(f"functions to recompile: {len(b.funcs)} (stubs {len(b.taken)})")
+    print(f"functions to recompile: {len(b.funcs)} (stubs {len(b.taken)}; the ending engine's: "
+          f"{len(b.ending_funcs)} functions, {len(b.abs_stub)} stubs, {b.abs_end - EXT_ENDING:#x} bytes at {EXT_ENDING:08X})")
     print("PSP-only variables (extension RAM):", " ".join(f"{lo:06X}+{hi - lo:X}" for lo, hi, _ in b.psp_vars))
     print("PSP data copied:", " ".join(f"{lo:06X}+{hi - lo:X}" for lo, hi in sorted(b.copies)))
     print("engine functions recompiled from the PSP:", " ".join(f"{a:06X}" for a in b.engine_recompiled))
@@ -688,6 +825,7 @@ def main():
         print(f"character {c.cid:02X} -> PL{fid:02X}A/B/C.BIN: entry {c.entry:06X}, code {c.code[0]:06X}-{c.code[1]:06X}, "
               f"own data {c.own[0]:06X}-{c.own[1]:06X}, {w.size} bytes")
     patches = chartables.patches(chartables.Programs(os.path.join(dc_dir, "1ST_READ.BIN"), b.boot.data))
+    patches.append((EXT_ENDING, b.ending_area()))
     print(f"character tables: {len(patches)} entries and records for the new characters")
     import screens
     sel, sel_patches, screen_info = screens.build(
@@ -714,7 +852,10 @@ def main():
     import files
     for name, size in files.build(psp_data, dc_dir, out_dir, [cid for cid, _ in pairs]):
         print(f"{name}: {size} bytes")
-    patches += chartables.file_patches([k.lower() for k in files.KINDS])
+    import ending
+    for name, size, template in ending.build(b.boot, psp_data, dc_dir, out_dir, [cid for cid, _ in pairs]):
+        print(f"{name}: {size} bytes (the ending code of {template})")
+    patches += chartables.file_patches([k.lower() for k in files.KINDS] + ["end"])
     import throws
     throw_patches, end = throws.patches(dc_dir, psp_data, chartables.EXT_THROWS)
     assert end <= chartables.EXT_NAMES

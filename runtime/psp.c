@@ -272,13 +272,24 @@ void hle_ai_step(void) {
     g.r[0] = r0;
 }
 
-/* a stub: FFFF 5053 <index> FFFF in a character file */
+/* a stub: FFFF 5053 <index> FFFF in a character file, or in the extension RAM for the PSP's ending
+ * engine (tools/psp/build_char.py, ENDING_HANDLERS: the character files aren't loaded then) */
+#define EXT_ENDING 0x98F00000u
+#define EXT_ENDING_SIZE 0x100000u
 static int stub_index(uint32_t addr) {
     uint32_t off = addr & 0xFFFFFFu;
-    if (!is_ram(addr) || off < (SLOT_BASE & 0xFFFFFF) || off >= (SLOT_BASE & 0xFFFFFF) + 3 * SLOT_SIZE || addr & 1)
+    if (addr & 1) return -1;
+    if (addr - EXT_ENDING >= EXT_ENDING_SIZE &&
+        (!is_ram(addr) || off < (SLOT_BASE & 0xFFFFFF) || off >= (SLOT_BASE & 0xFFFFFF) + 3 * SLOT_SIZE))
         return -1;
     if (R32(addr) != STUB_MAGIC || R16(addr + 6) != 0xFFFF) return -1;
     return (int)R16(addr + 4);
+}
+
+/* the player slot a stub's character file is in (the ending engine's: the running slot's) */
+static unsigned stub_slot(uint32_t addr) {
+    if (addr - EXT_ENDING < EXT_ENDING_SIZE) return s_slot;
+    return ((addr & 0xFFFFFFu) - (SLOT_BASE & 0xFFFFFF)) / SLOT_SIZE;
 }
 
 int psp_stub_call(uint32_t addr) {
@@ -292,7 +303,7 @@ int psp_stub_call(uint32_t addr) {
             logf_("psp stub %06X(%08X, %08X) at frame %llu", (unsigned)index < g_psp_fn_count ? g_psp_fn_addr[index] : 0u,
                   g.r[4], g.r[5], (unsigned long long)g_vblank_count);
     }
-    unsigned slot = ((addr & 0xFFFFFFu) - (SLOT_BASE & 0xFFFFFF)) / SLOT_SIZE;
+    unsigned slot = stub_slot(addr);
     /* from the Dreamcast side: arguments r4-r7, then the stack */
     for (int i = 4; i < 8; i++) m.r[i] = g.r[i];
     for (int i = 0; i < 4; i++) m.r[8 + i] = R32(g.r[15] + 4u * (uint32_t)i);
@@ -305,8 +316,7 @@ int psp_stub_call(uint32_t addr) {
 void psp_icall(uint32_t addr) {
     int index = stub_index(addr);
     if (index >= 0) {  /* one of ours: stay in MIPS registers */
-        unsigned slot = ((addr & 0xFFFFFFu) - (SLOT_BASE & 0xFFFFFF)) / SLOT_SIZE;
-        run((unsigned)index, slot);
+        run((unsigned)index, stub_slot(addr));
         return;
     }
     psp_call_dc(addr);

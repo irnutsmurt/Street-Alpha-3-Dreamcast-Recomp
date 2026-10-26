@@ -15,4 +15,7 @@ const uint32_t g_psp_portrait_palettes = 0;
 const uint32_t g_psp_layout_extras[][3] = {{0, 0, 0}};
 const uint32_t g_psp_vs_palette_shift = 0;
 const uint16_t g_psp_hud_parts[4][4] = {{0}};
+const uint32_t g_psp_ending_handlers[9] = {0};
+const uint32_t g_psp_ending_objects[][3] = {{0, 0, 0}};
+const unsigned g_psp_ending_object_count = 0;
 const unsigned g_psp_layout_extra_count = 0;
