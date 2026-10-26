@@ -91,7 +91,7 @@ comes in overlays (`PLnnA/B/C.BIN`, one per player slot) at `0x8C800000`,
 | +0x60 / +0x62 | health / full health (144); below 0 is a knockout |
 | +0x131 | player side, it seems (indexes `8C09B068` with `8C17FC98`) |
 | +0x132 | character number (the select screen writes it here) |
-| +0x140 | World Tour EXP (copy) |
+| +0x140 | score (binary, what the HUD shows; in World Tour the EXP's copy) |
 | +0x14E | super meter (0x90 full) |
 | +0x155 | CPU-controlled |
 | +0x162 | -ism / version byte (also used by the file choice in `f_8C01AEC8`) |
@@ -557,6 +557,29 @@ boxes moved after them), parts 0x33-0x36; big portraits bank 8 parts
   BY and the url (the overlay's strings at `0x98F8`, `0x9910`, `0x9920`)
   by `f_8C01532A`.
 - The staff roll's names are in every overlay too (`0x9B9C` on).
+
+## The ranking
+
+- Entries: 16 bytes at `8C09B33C`, 6 lists of `0x220` (34 entries): +0 the
+  score (BCD), +4 the name, +8 the character, +13 newly entered. Saved
+  with the system data.
+- Score Ranking (Mode Menu; the menu modules `8C081xxx`-`8C08Bxxx`): each
+  entry's face is a part of the mode menu's sprite bank (`MSEL.PAC`,
+  sections 7 parts, 8 tiles, 9 palettes; bank `0x12`), from a byte table by
+  character (`8C0D2B01`; copies `8C0D3045`, `8C0D3D1D` for the other
+  modules), mirrored by a u16 table (`8C0D2AB2`; copies `8C0D2FF6`,
+  `8C0D3CCA`) whose low byte goes to the object's +`0xB`. Drawn by mode 3
+  (+`0x44` the part).
+- The portrait screen after a ranked game (task `8C061C7E`, steps
+  `8C0BE0F0`; step 4 `8C062072`): `f_8C01C8D0` finds the newly entered
+  entry, loads `RK_COM.PAC` (bank `0x16`: name plates, part
+  `8C0D2035`[character] + 2) and `RKnn.PAC` (bank `0x17`: the portrait from
+  part 0, the small sprite's frames, its name strip; palettes), and
+  `8C07EAB4` draws them with the animations `8C0D1EA8`[character] and
+  `8C0D1F40`[character] (8-byte records, RK parts).
+- Quads: `8C0193A0` takes the flips from object +`0x54` (x) and +`0x58`
+  (y); the cached textures (`f_8C01A282`) are keyed by the part's tile
+  list offset, the bank and the palette.
 
 ## Main loop and rendering
 
