@@ -44,6 +44,9 @@ RELOCATE = []
 # (tools/psp/chartables.py, IMMEDIATES)
 IMMEDIATE = {}
 
+# Instructions replaced: address -> C statement (tools/psp/chartables.py, REPLACE)
+REPLACE = {}
+
 
 def relocate(v):
     for lo, hi, new in RELOCATE:
@@ -58,6 +61,8 @@ def emit_insn(ins, pc, img):
     Rn, Rm, R0 = R(n), R(m), R(0)
     nm = ins.name
     T = "g.t"
+    if pc in REPLACE:
+        return REPLACE[pc]
 
     # ---- data movement ----
     if pc in IMMEDIATE and nm in ("mov #imm", "mov.w@pc", "mov.l@pc"):

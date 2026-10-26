@@ -6,7 +6,9 @@ sections the PSP's doesn't have, and the order).
             (twiddled), palettes (red and blue swapped; 5 a colour choice:
             Ingrid's 8 cut to their first 5) and the animation
             section 0xA from the PSP's; the voice bank (SOSB), the KO
-            echo's (SMPB) and the voice records (0xD) converted (sound.py)
+            echo's (SMPB) and the voice records (0xD) converted (sound.py);
+            the move list's texture (0x10000E00: the pause menu's ATTACK
+            LIST; the PSP's names the moves in Japanese, as the PSP shows it)
   OPnn.PAC  the arcade prologue on the world map (op26_u.pac ...): bank 0x15
             (the portrait and the screen's frame), and after its palettes
             the text: the personal data (the PSP's section 0x10004, the same
@@ -51,6 +53,7 @@ def pl_file(psp, dc):
     d[0x40000002], d[0x20000005] = sound.voice_bank(s[0x40000002], s[0x40008002],
                                                     d[0x40000002], d[0x20000005])[:2]
     d[0xD] = sound.voice_records(s[0xD])
+    d[0x10000E00] = pac.convert_texture(s[0x10000E00], d[0x10000E00])  # the move list
     return pac.build(pac.order(dc), d)
 
 

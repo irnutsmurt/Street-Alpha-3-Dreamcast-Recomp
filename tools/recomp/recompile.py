@@ -149,6 +149,8 @@ def run(disc_dir, out_dir, report=None, progress=None):
     report(f"{len(codegen.RELOCATE)} character tables moved")
     data = open(os.path.join(disc_dir, "1ST_READ.BIN"), "rb").read()
     img = Image(data, MAIN_BASE)
+    codegen.REPLACE.clear()
+    codegen.REPLACE.update({a: code for a, code, _ in chartables.REPLACE})
     codegen.IMMEDIATE.clear()
     codegen.IMMEDIATE.update({a: chartables.immediate(a) for a, _ in chartables.IMMEDIATES})
     imm_defaults = [immediate_value(img, a) for a, _ in chartables.IMMEDIATES]

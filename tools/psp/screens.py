@@ -28,12 +28,14 @@ FRAMES = 0x8C0BF712           # the cells' frames (bank B part 0x27)
 FRAME_PART = 0x27
 PORTRAITS, NAMES, BANNERS, BANNER_WIDTHS = 0x8C0C03B4, 0x8C0C1194, 0x8C0C142C, 0x8C0C1478
 STRIPS = 0x8C0C11F4           # the name strip down the side: u16 spacing | 0x8000, u16 part
-PORTRAIT_PALETTES = 0x4C0     # + character x 6 + colour
+PORTRAIT_PALETTES = 0x4C0     # + character x 6 + colour: the sprite beside the big portrait (slot 32 + 2 x side)
 PALETTES_PER = 6
 VS_PALETTES = 0x148           # + character x 24 + colour x 4: the VS portraits' (f_8C069D34), on both
 VS_PALETTES_PER = 24
 # --- the PSP (BOOT.BIN, select_u.pac) ---
 PSP_PORTRAITS = 0x2256C0      # animation per character (42)
+PSP_PORTRAIT_PALETTES = 0x538  # + character x 6 + colour: after the 5 x 24 VS palettes the PSP added before them
+TWO_PALETTES = 0x29           # Ingrid: two a colour (PSP 0x99174: + 2 x colour, 2 palettes; psp_load.c)
 PSP_FACES = {0x26: 0x33, 0x27: 0x34, 0x28: 0x35, 0x29: 0x36}       # bank B parts
 PSP_NAMES = {0x26: 0x150, 0x27: 0x151, 0x28: 0x152, 0x29: 0x153}   # bank 8 parts
 PSP_BANNERS = {0x26: 0xEE, 0x27: 0xEF, 0x28: 0xF0, 0x29: 0xF1}     # bank 8 parts
@@ -157,8 +159,9 @@ def build(dc_select, psp_select, main, boot):
         patches.append((data, bytes(recs)))
         patches.append((tables[PORTRAITS].ext + 4 * c, struct.pack("<I", data)))
         data += (len(recs) + 3) & ~3
-        lo = (PORTRAIT_PALETTES + c * PALETTES_PER) * 32
-        new_pal += pac.swap_rb(psp_pal[lo:lo + PALETTES_PER * 32])
+        lo = (PSP_PORTRAIT_PALETTES + c * PALETTES_PER) * 32
+        n = PALETTES_PER * (2 if c == TWO_PALETTES else 1)
+        new_pal += pac.swap_rb(psp_pal[lo:lo + n * 32])
     # the VS screen: the groups with the new characters' records
     vs_names = {c: add_chain(b8, p8, struct.unpack_from("<H", boot, PSP_VS_NAMES + 0x74 + 8 * c + 4)[0])
                 for c in NEW}

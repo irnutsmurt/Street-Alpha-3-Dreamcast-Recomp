@@ -166,13 +166,15 @@ void mmio_tick(void);
 void irq_timer_tick(void) {
     /* A host-side stall (loading a stage's textures, Windows holding the window
      * while it's dragged) would otherwise become game time all at once: the
-     * sound CPU races ahead of the main CPU that feeds its voice streams, and
-     * the last stretch of a stream (the announcer) plays twice. Count such a
-     * stall as a pause instead. Not in deterministic (netplay) mode. */
+     * sound CPU races ahead of the main CPU that feeds its streams, and the
+     * last stretch of a stream plays twice. The music stream's ring is 0x1000
+     * samples a channel at 44.1 kHz (93 ms, refilled a 46 ms half at a time),
+     * so a stall of more than 30 ms counts as a pause instead (it was 50,
+     * which still let some through). Not in deterministic (netplay) mode. */
     static uint64_t s_last_tick;
     if (!g_det) {
         uint64_t t0 = now_ns();
-        if (s_last_tick && t0 > s_last_tick + 50000000ull) host_pause_add(t0 - s_last_tick - 1000000ull);
+        if (s_last_tick && t0 > s_last_tick + 30000000ull) host_pause_add(t0 - s_last_tick - 1000000ull);
         s_last_tick = now_ns();
     }
     aica_update();

@@ -1,5 +1,6 @@
 /* Native implementations of the Dreamcast boot ROM services the game calls:
  * system info, ROM font, flash ROM, GD-ROM drive and misc vectors. */
+#include <SDL3/SDL.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -43,6 +44,11 @@ static uint32_t s_stream_fad, s_stream_left;
 
 static void gd_read(uint32_t fad, uint32_t count, uint32_t dst) {
     uint8_t buf[2048];
+    {   /* SFA3_DISC_DELAY_MS=<ms>: each read takes that long (testing a slow disk's stalls) */
+        static int delay = -1;
+        if (delay < 0) delay = getenv("SFA3_DISC_DELAY_MS") ? atoi(getenv("SFA3_DISC_DELAY_MS")) : 0;
+        if (delay > 0) SDL_DelayNS((uint64_t)delay * 1000000u);
+    }
     for (uint32_t i = 0; i < count; i++) {
         gdi_read_sector(fad + i, buf);
         g_stats.gd_sectors++;

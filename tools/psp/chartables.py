@@ -19,6 +19,10 @@ new entries are converted is the table's kind:
             PSP record -> the Dreamcast record the same characters use
   ptr_list  u32 pointers to lists of u16 ending in 0xFFFF: a list the
             Dreamcast has is reused, a new one is copied into EXT
+  ptr_rank  u32 pointers into a block of records both programs have, the
+            same records in the same order (characters may point at
+            different ones on the PSP): a PSP record -> the Dreamcast's of
+            the same rank
 
 Only tables the game never writes are moved (the literals are rewritten in
 loads and stores alike, but a table that is saved or copied as part of a
@@ -59,6 +63,19 @@ IMMEDIATES = [
     (0x8C06F8A4, "the same, its value"),
     (0x8C01C520, "World Tour: room for bank 0x1D's tiles (WORLD.PAC), malloc'd (0x30000; f_8C01C508)"),
     (0x8C01C600, "the same (f_8C01C5E8)"),
+]
+
+
+# Instructions replaced (C statements in the recompiled code): the dialogue
+# tables by occasion and character (8C0A8490, 8C0A8508) have rows of 40 bytes
+# (38 characters and 2 spare); moved, each row is a table of its own (TABLES),
+# 44 bytes apart: the code's row x 40 becomes row x 44 (r0 holds row x 20 there)
+ROW_STRIDE = 44
+REPLACE = [
+    (0x8C0272A2, "g.r[0] = (uint32_t)((int32_t)g.r[0] / 20 * 44);",
+     "shll r0 (row x 40) in the dialogue choice from 8C0A8490"),
+    (0x8C028BDA, "g.r[0] = (uint32_t)((int32_t)g.r[0] / 20 * 44);",
+     "shll r0 (row x 40) in the dialogue choice from 8C0A8508"),
 ]
 
 
@@ -198,6 +215,21 @@ TABLES = [
     T(0x8C0D2035, 1, None, count=37, note="the ranking portrait screen: the name plate, RK_COM.PAC part this + 2 (8C07EEBA)"),
     T(0x8C0D1EA8, 4, None, count=38, note="the ranking portrait screen: an animation (8-byte records, RKnn.PAC parts; 8C07F130)"),
     T(0x8C0D1F40, 4, None, count=38, note="the same, another animation (8C07F16E)"),
+    # --- the pause menu's ATTACK LIST ---
+    T(0x8C0D5064, 4, 0x238EC8, "ptr_rank", note="the move list's rows: a record of texture row numbers by scroll "
+                                            "position and line (8C08FA32); the records go by the list's length"),
+    # --- arcade: the pre-fight dialogues: which of the player's scripts (descriptor word 38's entry 0) plays
+    # (0xFF none). The 2-D ones (by occasion: the stage object's +0x3B - 4, and character) have a row
+    # each, ROW_STRIDE apart once moved (REPLACE); the PSP's rows are 42 bytes ---
+    T(0x8C0A8468, 1, 0x20B508, note="a dialogue's script by character (8C0270EA, 8C027194)"),
+    T(0x8C0A8490, 1, 0x20B532, note="dialogue scripts by occasion and character, row 0 (8C0272A0)"),
+    T(0x8C0A84B8, 1, 0x20B55C, note="row 1"),
+    T(0x8C0A84E0, 1, 0x20B586, note="row 2"),
+    T(0x8C0A8508, 1, 0x20B5B0, note="another occasion's dialogue scripts, row 0 (8C028BD6)"),
+    T(0x8C0A8530, 1, 0x20B5DA, note="row 1"),
+    # --- the arcade select screen ---
+    T(0x8C0BE53C, 2, 0x2230B7, note="a character's cell (column, row): where the cursor starts, e.g. on a "
+                                    "continue (8C0684F2; the 3 handlers at 8C0BE530 come before it)"),
 ]
 
 
@@ -210,8 +242,17 @@ def layout():
     return TABLES
 
 
+def check_rows():
+    """the 2-D tables' rows lie ROW_STRIDE apart"""
+    tables = {t.dc: t for t in layout()}
+    for first, rows in ((0x8C0A8490, 3), (0x8C0A8508, 2)):
+        for r in range(1, rows):
+            assert tables[first + 40 * r].ext == tables[first].ext + ROW_STRIDE * r, hex(first)
+
+
 def relocations():
     """(start, end, new start) for the recompiler"""
+    check_rows()
     return [(t.dc, t.end, t.ext) for t in layout()]
 
 
@@ -255,6 +296,10 @@ def agreement(pr, t):
     if t.kind == "cmd":  # the records the same
         return sum(cmd_record(pr.d, pr.du32(t.dc + 4 * k)) == cmd_record(pr.p, pr.pu32(t.psp + 4 * k))
                    for k in range(n))
+    if t.kind == "ptr_rank":  # as many records on both
+        d = {pr.du32(t.dc + 4 * k) for k in range(n)}
+        p = {pr.pu32(t.psp + 4 * k) for k in range(n)}
+        return n if len(d) == len(p) else 0
     # pointers: the same pattern of shared records
     d = [pr.du32(t.dc + 4 * k) for k in range(n)]
     p = [pr.pu32(t.psp + 4 * k) for k in range(n)]
@@ -280,6 +325,10 @@ def patches(pr):
                 out.append((data, rec))
                 v = struct.pack("<I", data)
                 data = (data + len(rec) + 3) & ~3
+            elif t.kind == "ptr_rank":
+                d = sorted({pr.du32(t.dc + 4 * k) for k in range(38)})
+                p = sorted({pr.pu32(t.psp + 4 * k) for k in range(38)})
+                v = struct.pack("<I", d[p.index(pr.pu32(src))])
             elif t.kind in ("ptr", "ptr_list"):
                 target = pr.pu32(src)
                 pairs = {pr.pu32(t.psp + 4 * k): pr.du32(t.dc + 4 * k) for k in range(38)}

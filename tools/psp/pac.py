@@ -109,6 +109,21 @@ def convert_tiles(sec):
         offs.append(base+len(body)); body+=lz_opt(twiddle(unlz(sec,t[k])))
     return struct.pack("<%dI"%len(offs),*offs)+bytes(body)
 
+def convert_texture(psp, dc):
+    """a PSP texture section (32-byte header, 256x256 pixels linear, ABGR1555) as the Dreamcast's
+    (dc: one of its sections, for the header; the pixels twiddled, ARGB1555)"""
+    side = 256
+    tw = [0] * side  # the twiddle's bits of one coordinate: y in the even bits, x in the odd
+    for v in range(side):
+        tw[v] = sum(((v >> b) & 1) << (2 * b) for b in range(8))
+    src = swap_rb(psp[32:32 + 2 * side * side])
+    out = bytearray(dc[:32] + bytes(2 * side * side))
+    for y in range(side):
+        for x in range(side):
+            i = 32 + 2 * (tw[y] | tw[x] << 1)
+            out[i:i + 2] = src[2 * (y * side + x):2 * (y * side + x) + 2]
+    return bytes(out)
+
 def swap_rb(pal):
     out=bytearray(pal)
     for k in range(0,len(pal)-1,2):

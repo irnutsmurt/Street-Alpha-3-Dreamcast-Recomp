@@ -378,9 +378,14 @@ in a fixed RAM area with little room between them (bank 8 tiles
   tiles 4n-4n+3 (each compressed on its own, in order top-left,
   bottom-left, top-right, bottom-right).
 - Palettes: `f_8C069D64(index, slot, count)` copies bank 8 palettes
-  (`*(8C1A20A8)` + index x 32) into the slots. Big portraits use index
-  `0x4C0` + character x 6 + colour (`f_8C06BA42`/`BA72`/`BA92`; characters
-  0x14 and 0x1C load an extra one, `0x5A4`/`0x5A5`).
+  (`*(8C1A20A8)` + index x 32) into the slots. The sprite beside the big
+  portrait (the character standing, the portrait object's animation, bank 8
+  parts with palette 0) uses slot 32 + 2 x side, loaded at `8C06BB92` with
+  index `0x4C0` + character x 6 + colour (characters 0x14 and 0x1C load an
+  extra one into the next slot, `0x5A4`/`0x5A5`). The PSP's are at `0x538` +
+  character x 6 + colour (`0x9918C`: after the 120 VS palettes it added),
+  and Ingrid (0x29) has two a colour (`0x538` + 6 x 0x29 + 2 x colour,
+  count 2).
 - Parts are streamed into per-object textures on first use (`f_8C01A314`)
   and cached by part record (`f_8C01A282`): two objects drawing the same
   record share the first one's texture, even from different tile banks.
@@ -433,6 +438,13 @@ pointer table starts).
   `8C0A82E0` (by game state +0x22) then mark places whose Chun-Li (4) or
   Sodom (6) become `0x12`/`0x14`. Each route's 5th opponent is the
   character's story rival (Ryu: Rose).
+- Pre-fight dialogues: the stage object's +0x42 is the player's script
+  (descriptor word 38's entry 0) from `8C0A8468`[character] (`8C0270EA`),
+  `8C0A8490`[(object +0x3B - 4) x 40 + character] (`8C0272A0`) or
+  `8C0A8508`[the same] (`8C028BD6`), `0xFF` none; `f_8C02CBB6` shows the
+  lines (`8C0A8450`: the object's 6 states). Bank `0x1A` (`BDnn.PAC`) holds
+  extra sprites: tiles `8CA30000`, parts `8CA3E000`. docs/psp-characters.md
+  (Pre-fight dialogues) has more.
 - The character's stage: `8C0A8420` (`f_8C02CA78`); per-character flags
   `8C0A8380`, `8C0A83A8`, `8C0A83D0`, `8C0A83F8` (`f_8C02C758` & co.).
 - World map: the prologue (`OPnn.PAC`, opened by `f_8C01B904`): portrait,
@@ -473,9 +485,10 @@ The PSP (`select_u.pac`, same formats, tiles linear) adds: in the arcade
 grid Yun and Ingrid at the ends of row 5, Eagle and Maki in row 6 (where
 the Dreamcast has random cells); faces at bank B tiles 44-47 (the ENTRY
 boxes moved after them), parts 0x33-0x36; big portraits bank 8 parts
-`0x3D7`-`0x416`, palettes `0x4C0` + character x 6 (its palette section has
-150 more, so its later indices are shifted: `0x6A1` for the Dreamcast's
-`0x60B`).
+`0x3D7`-`0x416`; its palette section has 150 more (the 4 x 24 VS
+palettes and 24 more before the portrait sprites' at `0x538`, Ingrid's 6
+extra after them), so its later indices are shifted: `0x6A1` for the
+Dreamcast's `0x60B`.
 
 ## World Tour
 
@@ -489,7 +502,24 @@ boxes moved after them), parts 0x33-0x36; big portraits bank 8 parts
   parts from `8C0AB7D0`[character] (u16, 38 entries).
 - The entries (characters saved from World Tour) are at `8C188D48`
   (2 x `0x354`); the versus select screen shows them in its last row
-  (Select screens).
+  (Select screens). An entry: +0 1 in use, +2 the -ism (sign), +4 the total
+  level - 1, +5 the X-ism level - 1, +8 EXP, +0x0C / +0x10 / +0x14 the X-,
+  A-, V-ism EXP, from +0x2E u16 stats. A fighter in a World Tour fight
+  points at its entry (fighter +0x2F0); a level goes up only after a fight
+  won with that -ism.
+- The fight HUD's -ism label (`f_8C0630DC`): part `8C0BE1F4`[style x 2 +
+  side + 8 x kind], style 0 / 1 / 2 X / A / V from fighter +0x162's sign, 3
+  for a World Tour fighter (its -ism kept at HUD +0x11), kind 0 plain, 1
+  World Tour ("Lv"), 2 / 3 MAZI. Style 3 is I-ISM: World Tour fighters show
+  "I-ISM Lv", on the disc as in the port (the PSP the same, `0x89CD4`).
+
+## Pause menu: ATTACK LIST
+
+The move list (Training's pause menu, ATTACK LIST) draws rows of the
+character's texture (`PLnn.PAC` section `0x10000E00`) picked by a record
+from `8C0D5064`[character] (`8C08FA32`: record[scroll position x 4 + line]
++ 18 is the texture row); nine shared records `8C0D4EFA`-`8C0D502A`, one per
+list length.
 
 ## Arcade endings
 
