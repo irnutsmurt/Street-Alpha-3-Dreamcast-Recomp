@@ -107,6 +107,11 @@ def apply_theme(root, dark, log=None):
     for name, key in (("Muted", "muted"), ("Faint", "faint"), ("Link", "link"), ("Ok", "ok"), ("Busy", "busy"),
                       ("Err", "err")):
         style.configure(f"{name}.TLabel", foreground=c[key])
+    if not hasattr(root, "skip_font"):  # a step that won't run: struck through (the font kept alive on the window)
+        from tkinter import font
+        root.skip_font = font.nametofont("TkDefaultFont").copy()
+        root.skip_font.configure(overstrike=1)
+    style.configure("Skip.TLabel", foreground=c["faint"], font=root.skip_font)
     root.configure(background=c["bg"])
     if log is not None:
         log.configure(background=c["field"], foreground=c["fg"], insertbackground=c["fg"],
@@ -217,14 +222,19 @@ class App:
         self.desktop = tk.BooleanVar(value=True)
         ttk.Checkbutton(form, text="Create a desktop shortcut", variable=self.desktop).grid(
             row=5, column=1, sticky="w", padx=6, pady=(6, 0))
+        self.auto_update = tk.BooleanVar(value=bool(remembered.get("auto_update_game", False)))
+        ttk.Checkbutton(form, text="Update the game by itself after this app updates", variable=self.auto_update,
+                        command=lambda: save_settings(auto_update_game=self.auto_update.get())).grid(
+            row=6, column=1, sticky="w", padx=6, pady=(2, 0))
 
         steps = ttk.LabelFrame(root, text="Progress")
         steps.pack(fill="x", **pad)
-        self.marks = {}
+        self.marks, self.step_labels, self.skipped = {}, {}, set()
         for i, s in enumerate(pipeline.STEPS):
             mark = ttk.Label(steps, text="○", width=2)
             mark.grid(row=i, column=0, padx=(10, 4), pady=1)
-            ttk.Label(steps, text=pipeline.STEP_NAMES[s]).grid(row=i, column=1, sticky="w")
+            self.step_labels[s] = ttk.Label(steps, text=pipeline.STEP_NAMES[s])
+            self.step_labels[s].grid(row=i, column=1, sticky="w")
             self.marks[s] = mark
         self.spinner = Spinner(steps, self.dark.get())
         self.current = None  # the step running
@@ -259,12 +269,17 @@ class App:
             self.image.set(self.info["image"])  # the disc this install was made from
         self.install.trace_add("write", lambda *_: self.find_existing())
         self.image.trace_add("write", lambda *_: self.find_existing())
+        self.psp_image.trace_add("write", lambda *_: self.show_skipped())
         if after_update:  # this is a new version the old one just downloaded
             threading.Thread(target=lambda: self_update.remove_old(after_update.get("old")), daemon=True).start()
             if self.info and self.info.get("gdi"):
                 if not self.is_update():
                     self.image.set("")  # an update, never a conversion from another image
-                self.root.after(500, self.start)  # bring the game up to this version straight away
+                if self.auto_update.get():
+                    self.root.after(500, self.start)  # bring the game up to this version straight away
+                else:
+                    self.status.config(text=f"This app is now version {VERSION}. Press Update to rebuild your game "
+                                            "with it (your saves and settings stay).")
         elif self_update.current_folder():
             threading.Thread(target=self.check_for_app_update, daemon=True).start()
 
@@ -300,6 +315,7 @@ class App:
             b.config(state="normal" if installed else "disabled")
         can_update = self.is_update()
         self.convert_btn.config(text="Update" if can_update else "Convert")
+        self.show_skipped()
         if not installed:
             self.status.config(text="Ready.")
         elif can_update:
@@ -311,6 +327,20 @@ class App:
             self.status.config(text="Already installed. Press Convert to rebuild it from the chosen disc image."
                                if self.image.get().strip() else
                                "Already installed. Choose your disc image and press Convert to rebuild it.")
+
+    def addon_wanted(self):
+        """the PSP characters step runs: a PSP image chosen, or an update of an install that has them"""
+        if self.psp_image.get().strip():
+            return True
+        return bool(self.is_update() and self.info and self.info.get("psp_characters"))
+
+    def show_skipped(self):
+        """strike through the steps that won't run (while nothing is running)"""
+        if self.worker and self.worker.is_alive():
+            return
+        self.skipped = set() if self.addon_wanted() else {"addon"}
+        for s in pipeline.STEPS:
+            self.step_labels[s].config(style="Skip.TLabel" if s in self.skipped else "TLabel")
 
     def is_update(self):
         """An install to bring up to date: no image chosen, or the one it was made from."""
@@ -357,8 +387,9 @@ class App:
         if free < need:
             return self.fail(f"Not enough free space: about {need} GB is needed while converting "
                              f"({free:.1f} GB free).")
+        self.show_skipped()
         for s in pipeline.STEPS:
-            self.marks[s].config(text="○", style="TLabel")
+            self.marks[s].config(text="–" if s in self.skipped else "○", style="TLabel")
         self.convert_btn.config(state="disabled")
         self.play_btn.config(state="disabled")
         self.bar.config(value=0)
@@ -392,8 +423,12 @@ class App:
                 if ev[0] == "progress":
                     _, st, frac, msg = ev
                     i = pipeline.STEPS.index(st)
+                    if st in self.skipped:  # it runs after all (an install keeping the PSP characters' files)
+                        self.skipped.discard(st)
+                        self.step_labels[st].config(style="TLabel")
                     for s in pipeline.STEPS[:i]:
-                        self.marks[s].config(text="✔", style="Ok.TLabel")
+                        if s not in self.skipped:
+                            self.marks[s].config(text="✔", style="Ok.TLabel")
                     self.marks[st].config(text="", style="TLabel")  # the spinner turns in its place
                     if self.current != st:
                         self.current = st
@@ -406,7 +441,8 @@ class App:
                     self.spinner.hide()
                     self.current = None
                     for s in pipeline.STEPS:
-                        self.marks[s].config(text="✔", style="Ok.TLabel")
+                        if s not in self.skipped:
+                            self.marks[s].config(text="✔", style="Ok.TLabel")
                     self.game = ev[1]
                     self.bar.config(value=1)
                     self.status.config(text="Done! Press Play.", style="Muted.TLabel")

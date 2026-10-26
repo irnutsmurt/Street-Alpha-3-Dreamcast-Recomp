@@ -24,7 +24,9 @@ ROOT = (os.path.dirname(sys.executable) if getattr(sys, "frozen", False)
 
 CFLAGS = ["-O2", "-std=gnu11", "-fno-strict-aliasing", "-fwrapv"]
 # what we ship prebuilt carries no debug info and no paths of the machine it was built on
-SHIP_FLAGS = ["-g0", f"-ffile-prefix-map={ROOT}=.", f"-ffile-prefix-map={os.path.expanduser('~')}=~"]
+# (-fno-addrsig: strip renumbers a Windows object's symbols, which an .llvm_addrsig section names by number:
+# lld-link then fails with "invalid symbol index in addrsig section")
+SHIP_FLAGS = ["-g0", "-fno-addrsig", f"-ffile-prefix-map={ROOT}=.", f"-ffile-prefix-map={os.path.expanduser('~')}=~"]
 # the oldest Linux the game runs on: glibc 2.31 (Ubuntu 20.04, Debian 11 and newer).
 # Everything (runtime, SDL3, the game, the CHD helper) is built against it.
 TARGETS = {"linux": "x86_64-linux-gnu.2.31", "windows": "x86_64-windows-gnu"}
@@ -140,7 +142,8 @@ def build_runtime(out_lib, gen_inc_dirs, sdl_include, vulkan_include, zig=None, 
     if os.path.exists(out_lib):
         os.remove(out_lib)
     subprocess.check_call([zig, "ar", "rcs", out_lib] + [j[1] for j in jobs])
-    subprocess.check_call(["strip", "--strip-debug", out_lib])  # Windows objects name their temp file in .debug$S
+    # Windows objects name their temp file in .debug$S; no .llvm_addrsig may be left to point at moved symbols
+    subprocess.check_call(["strip", "--strip-debug", "--remove-section=.llvm_addrsig", out_lib])
     return out_lib
 
 
