@@ -11,6 +11,7 @@ Makes build/dist/SFA3-Setup-<platform>-x86_64/ and a .tar.xz (Linux) / .zip (Win
     lib/                    SDL3 (installed next to the game) and what the game links against
     runtime/*.h             the runtime's headers (the recompiled C includes them)
     bin/chd2gdi[.exe]       the CHD helper (libchdr)
+    bin/libsfa3conv.so | sfa3conv.dll   the add-on's conversions in C (tools/sfa3conv.c)
     licenses/               third-party licences
 Nothing from the game is in it: players convert their own disc.
 
@@ -87,13 +88,20 @@ def winpath(p):
 
 # the PSP characters add-on's tools (tools/psp; build_char imports most of them inside functions)
 PSP_MODULES = ["psp_iso", "align", "build_char", "chartables", "screens", "ranking", "menus", "hud", "worldtour",
-               "files", "movelist", "ending", "throws", "arcade", "sound", "sprites", "pac", "mipsgen", "mips"]
+               "files", "movelist", "ending", "throws", "arcade", "sound", "sprites", "pac", "mipsgen", "mips",
+               "native", "cache"]
+CONV_LIB = {"linux": "libsfa3conv.so", "windows": "sfa3conv.dll"}
 
 
 def pyinstaller(platform, dist):
     args = ["--noconfirm", "--onedir", "--windowed", "--name", "SFA3-Setup"]
     work = os.path.join(ROOT, "build", "pyinstaller", platform)
+    # the tools' fingerprints (stamps.py): the app has no module sources to compute them from
+    os.makedirs(work, exist_ok=True)
+    stamps_json = os.path.join(work, "stamps.json")
+    subprocess.check_call([sys.executable, os.path.join(ROOT, "tools", "stamps.py"), stamps_json])
     paths = {"dist": dist, "work": work, "spec": work, "tools": os.path.join(ROOT, "tools"),
+             "stamps": stamps_json,
              "recomp": os.path.join(ROOT, "tools", "recomp"),
              "psp": os.path.join(ROOT, "tools", "psp"),
              "extra": os.path.join(ROOT, "tools", "recomp", "extra_entries.txt"),
@@ -112,9 +120,10 @@ def pyinstaller(platform, dist):
     subprocess.check_call(cmd + args + [
         "--distpath", paths["dist"], "--workpath", paths["work"], "--specpath", paths["spec"],
         "--paths", paths["tools"], "--paths", paths["recomp"], "--paths", paths["psp"],
-        "--hidden-import", "recompile", "--hidden-import", "gdi_extract",
+        "--hidden-import", "recompile", "--hidden-import", "gdi_extract", "--hidden-import", "stamps",
         *[a for m in PSP_MODULES for a in ("--hidden-import", m)],
-        "--add-data", paths["extra"] + sep + ".", "--add-data", paths["maps"] + sep + ".", paths["app"]], env=env)
+        "--add-data", paths["extra"] + sep + ".", "--add-data", paths["maps"] + sep + ".",
+        "--add-data", paths["stamps"] + sep + ".", paths["app"]], env=env)
 
 
 def copy_zig(platform, out):
@@ -143,6 +152,7 @@ def bundle(platform):
     for f in libs:
         need(os.path.join(lib_dir, f))
     helper = need(os.path.join(ROOT, "build", "tools", platform, "chd2gdi" + zig_build.exe_suffix(platform)))
+    conv = need(os.path.join(ROOT, "build", "tools", platform, CONV_LIB[platform]))
 
     shutil.rmtree(out, ignore_errors=True)
     os.makedirs(DIST, exist_ok=True)
@@ -168,6 +178,7 @@ def bundle(platform):
         shutil.copy2(h, os.path.join(out, "runtime"))
     os.makedirs(os.path.join(out, "bin"))
     shutil.copy2(helper, os.path.join(out, "bin"))
+    shutil.copy2(conv, os.path.join(out, "bin"))
     lic = os.path.join(out, "licenses")
     os.makedirs(lic)
     shutil.copy2(os.path.join(ROOT, "LICENSE"), os.path.join(out, "LICENSE.txt"))  # this project: GPL-3.0-or-later

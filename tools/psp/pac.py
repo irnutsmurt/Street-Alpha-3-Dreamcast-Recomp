@@ -6,8 +6,11 @@ Sections: 0x100000 sprite parts, 0x200000 sprite tiles, 0x400000 palettes,
 then sound and other data. A tile is 16x16 pixels, 4 bits each, LZ-packed
 (unlz / lz_opt); the Dreamcast stores the pixels twiddled for the PowerVR, the
 PSP row by row. Palettes: PSP ABGR1555, Dreamcast ARGB1555.
+convert_tiles and lz_opt run in C when the add-on's library is there (native.py).
 """
 import struct
+
+import native
 
 def sections(d):
     n=struct.unpack_from("<I",d,0)[0]; off=0x800; out={}
@@ -58,6 +61,8 @@ def twid(x, y):  # PowerVR twiddle: y in the even bits, x in the odd
 def px(t, i): return (t[i>>1] >> (4*(i&1))) & 15
 
 def untwiddle(t):
+    if native.LIB:
+        return native.untwiddle(t)
     out=bytearray(128)
     for y in range(16):
         for x in range(16):
@@ -66,6 +71,8 @@ def untwiddle(t):
     return bytes(out)
 
 def twiddle(lin):
+    if native.LIB:
+        return native.twiddle(lin)
     out=bytearray(128)
     for y in range(16):
         for x in range(16):
@@ -103,6 +110,8 @@ def lz(data):
 
 def convert_tiles(sec):
     """a PSP sprite section (linear tiles) as the Dreamcast's (twiddled)"""
+    if native.LIB:
+        return native.convert_tiles(sec)
     t=tile_table(sec); body=bytearray(); offs=[]
     base=4*len(t)
     for k in range(len(t)):
@@ -135,6 +144,8 @@ def swap_rb(pal):
 def lz_opt(data):
     """smallest encoding for unlz: dynamic programming over the positions.
     cost in bits: a literal 1+8, a back copy 1+8, a run 1+16"""
+    if native.LIB:
+        return native.lz_opt(data)
     n = len(data)
     INF = 1 << 30
     best = [INF] * (n + 1); how = [None] * (n + 1)

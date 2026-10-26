@@ -34,6 +34,7 @@ import os
 import struct
 import sys
 
+import cache
 import movelist
 import pac
 import sound
@@ -148,7 +149,8 @@ def build(psp_data, dc_dir, out_dir, chars=NEW, kinds=KINDS):
         dc = open(os.path.join(dc_dir, template), "rb").read()
         for c in chars:
             src = open(os.path.join(psp_data, psp_name.format(c)), "rb").read()
-            data = conv(src, dc, c, dc_dir) if conv is pl_file else conv(src, dc)
+            data = cache.value(f"files-{kind}", ["files"], [c, src, dc],  # from the cache when unchanged
+                               lambda: conv(src, dc, c, dc_dir) if conv is pl_file else conv(src, dc))
             name = f"{kind}{c:02X}.PAC"
             open(os.path.join(out_dir, name), "wb").write(data)
             out.append((name, len(data)))

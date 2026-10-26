@@ -30,7 +30,12 @@ comes in overlays (`PLnnA/B/C.BIN`, one per player slot) at `0x8C800000`,
 | `8C0BA64C` | (game mode, side) -> sound channel (bytes) |
 | `8C142B10` | Kamui: render state |
 | `8C17FBC0` | game state block (see Game state) |
-| `8C17FC60` | second game state block (the PSP keeps it apart: `0x8082F8`) |
+| `8C17FC60` | second game state block (the PSP keeps it apart: `0x8082F8`): +0 the fight's stage (from +0x64, the next one's, as a fight starts: `f_8C025F6E`), +20 the arcade's stage counter (u16) |
+| `8C0A0EF4` | stage handlers by stage (42; 0 none), called as a fight starts (`f_8C0218EC`) |
+| `8C0A704C` | the last fights' stages by character: row 0 the 9th fight, row 1 (+40) the 10th (`8C02C180`); `0xFF` the opponent's |
+| `8C0A8380` | the detour before Bison by character: `0x1E` the dolls, `0x15` Balrog, `0xFF` none (`f_8C02C758`) |
+| `8C0B8F74` | intro pairings: a list per character of (opponent, value) bytes ending `FFFF` (`f_8C04E280`) |
+| `8C0B1F94` | intro routines (13), by fighter +0x2E3; `8C0B2154` / `8C0B2162` give it from a pairing's value |
 | `8C17FC98` | a mode number (s16) indexing per-player tables (`8C09B068`, `8C0BA64C`) |
 | `8C17FC9B` | 2: a CPU fighter's files are character `0x15`'s (`f_8C01AEC8`) |
 | `8C17FD38` | fighters: 4 x `0x44C` bytes (to `8C180E68`) |
@@ -95,10 +100,12 @@ comes in overlays (`PLnnA/B/C.BIN`, one per player slot) at `0x8C800000`,
 | +0x14E | super meter (0x90 full) |
 | +0x155 | CPU-controlled |
 | +0x162 | -ism / version byte (also used by the file choice in `f_8C01AEC8`) |
+| +0x170, +0x174 | arcade: opponents beaten, bit n for character n (+0x174 from 32; `f_8C02C48C`) |
 | +0x180 | the character's descriptor in RAM (39 words, see Descriptor) |
 | +0x196 | Final Bison chosen |
 | +0x20C / +0x20D | guard meter size / guard damage |
 | +0x2D0, +0x2DC | lever input (u16; bits: 1 back, 2 forward, 4 down, 8 up) |
+| +0x2E3 | the intro to play (`8C0B1F94`; set by `f_8C04E280` from the pairings `8C0B8F74`) |
 | +0x2E7 | pad |
 | +0x32C | command input state: 8-byte blocks, one per command |
 
@@ -449,7 +456,16 @@ pointer table starts).
   extra sprites: tiles `8CA30000`, parts `8CA3E000`. docs/psp-characters.md
   (Pre-fight dialogues) has more.
 - The character's stage: `8C0A8420` (`f_8C02CA78`); per-character flags
-  `8C0A8380`, `8C0A83A8`, `8C0A83D0`, `8C0A83F8` (`f_8C02C758` & co.).
+  `8C0A83A8`, `8C0A83D0`, `8C0A83F8` (`f_8C02C758` & co.).
+- The last fights (`f_8C02C758` after each win, by the stage counter, game
+  state 2 +20): the 9th and 10th fights' stages from `8C0A704C`
+  (`[character]`, `[character + 40]`) into game state 2 +0x64; after the
+  9th win a character with a detour in `8C0A8380` (`0x1E` the dolls, Juli
+  and Juni; `0x15` Balrog) who hasn't beaten that one yet (fighter
+  +0x170/+0x174, `f_8C02C48C`) fights it first, and Bison 11th.
+- Intros: `f_8C04E280` looks the opponent up in the pairings (`8C0B8F74`)
+  of whichever fighter's +0x155 is 0 and sets both fighters' +0x2E3 from
+  `8C0B2154` / `8C0B2162` [value]: an intro routine of `8C0B1F94`.
 - World map: the prologue (`OPnn.PAC`, opened by `f_8C01B904`): portrait,
   personal data, the story; a button turns the page. Then the map with the
   route's ladder (names) and the next stage's place: `8C0C19C8`, (x, y) by

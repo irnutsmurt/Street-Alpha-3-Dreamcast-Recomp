@@ -275,6 +275,13 @@ static void control_file(PadState *st) {
         lobby_autopilot_start();
     } else if (!strcmp(cmd, "reset")) {  /* reset <0|1>: in-place machine reset (1 = deterministic) */
         machine_reset_request(atoi(arg));
+    } else if (!strcmp(cmd, "health")) {  /* health <player|-1> <value>: keep a fighter's health at most that (testing) */
+        extern int g_force_health_player, g_force_health_value;
+        g_force_health_player = atoi(arg);
+        g_force_health_value = n;
+    } else if (!strcmp(cmd, "refill")) {  /* refill <player|-1>: keep a fighter at full health (testing) */
+        extern int g_refill_player;
+        g_refill_player = atoi(arg);
     } else if (!strcmp(cmd, "poke")) {  /* poke <hex address> <value>: write a guest byte (debug) */
         W8((uint32_t)strtoul(arg, NULL, 16), (uint32_t)n);
     } else if (!strcmp(cmd, "fill")) {  /* fill <hex address> <bytes> <value>: write guest bytes (debug) */

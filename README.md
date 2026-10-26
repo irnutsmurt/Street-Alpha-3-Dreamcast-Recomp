@@ -71,9 +71,13 @@ the disc's files, without the empty part of the disc), so afterwards your disc
 image can be moved or deleted.
 
 **Updating:** run the setup app again. It finds your install and offers
-**Update**: no disc image needed, about 20 seconds, and your saves and
-settings stay as they are. The app also tells you when a new version of
-itself is out (**Get it** downloads it and updates the game right after).
+**Update**: no disc image needed, and your saves and settings stay as they
+are. An update redoes only what the new version changed (steps with nothing
+to do show as *unchanged*): a fix in the port's runtime takes seconds, one in
+the game's tables or the PSP characters a minute or two. **Rebuild
+everything** does it all again, in case an update ever misbehaves. The app
+also tells you when a new version of itself is out (**Get it** downloads it
+and updates the game right after).
 
 **Optional: the PSP characters.** If you also own *Street Fighter Alpha 3
 MAX* for the PSP (USA, `ULUS-10062`), choose its disc image too (**PSP
@@ -82,8 +86,8 @@ characters the PSP version has and the Dreamcast doesn't (Eagle, Maki, Yun
 and Ingrid): their code is recompiled from the PSP's, their sprites, voices,
 portraits and endings converted, and they join the select screens, arcade
 mode (with their own stories and endings), versus, World Tour and the
-rankings. This adds a few minutes and about 160 MB (the install keeps the
-PSP files it reads, so updates don't need the image). Leave it empty for
+rankings. This adds about a minute and 200 MB (the install keeps the PSP
+files it reads and what it converted, so updates don't need the image). Leave it empty for
 the Dreamcast's 38 characters. `SFA3-Setup --convert IMAGE FOLDER PSP-IMAGE`
 and `./sfa3port.py setup IMAGE --psp PSP-IMAGE` do the same.
 
