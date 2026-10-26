@@ -75,6 +75,18 @@ image can be moved or deleted.
 settings stay as they are. The app also tells you when a new version of
 itself is out (**Get it** downloads it and updates the game right after).
 
+**Optional: the PSP characters.** If you also own *Street Fighter Alpha 3
+MAX* for the PSP (USA, `ULUS-10062`), choose its disc image too (**PSP
+image**: an ISO, a CSO, or a ZIP of either). The setup then adds the four
+characters the PSP version has and the Dreamcast doesn't (Eagle, Maki, Yun
+and Ingrid): their code is recompiled from the PSP's, their sprites, voices,
+portraits and endings converted, and they join the select screens, arcade
+mode (with their own stories and endings), versus, World Tour and the
+rankings. This adds a few minutes and about 160 MB (the install keeps the
+PSP files it reads, so updates don't need the image). Leave it empty for
+the Dreamcast's 38 characters. `SFA3-Setup --convert IMAGE FOLDER PSP-IMAGE`
+and `./sfa3port.py setup IMAGE --psp PSP-IMAGE` do the same.
+
 When it's done, the app has added the game to your Start Menu (Windows) or app
 menu (Linux), and to your desktop if you left that ticked. **Add to Steam**
 puts it in your Steam library as a non-Steam game, so it works from Big

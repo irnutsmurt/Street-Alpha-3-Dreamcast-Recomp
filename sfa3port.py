@@ -46,7 +46,7 @@ def cli_progress():
 def cmd_setup(args):
     try:
         out = pipeline.run(args.image, force=args.force, toolchain=args.toolchain, progress=cli_progress(),
-                           log=lambda m: None)
+                           log=lambda m: None, psp_image=args.psp)
     except pipeline.SetupError as e:
         print()
         sys.exit(f"setup failed: {e}")
@@ -153,6 +153,8 @@ def main():
     s = sub.add_parser("setup", help="extract, verify, recompile and build from your disc image")
     s.add_argument("image", help="your disc image: .gdi, .cue (Redump CUE/BIN) or .chd")
     s.add_argument("--force", action="store_true", help="skip dump verification")
+    s.add_argument("--psp", metavar="IMAGE", help="optional: your PSP Street Fighter Alpha 3 MAX (USA) image (.iso, "
+                   ".cso or .zip): adds Eagle, Maki, Yun and Ingrid")
     s.add_argument("--toolchain", choices=["auto", "zig", "cmake"], default="auto",
                    help="auto: the bundled Zig toolchain when the prebuilt runtime is there, else CMake")
     sub.add_parser("rebuild", help="re-run recompile + CMake build from an already extracted disc")

@@ -737,6 +737,37 @@ build/test/arc_end.sh `<name> <moves> <stages>`: arcade won stage after
 stage, then shots through the ending; `STAGE=9` puts the stage counter at
 the last, `EXTRA="SFA3_FORCE_CHAR=1:A"` makes the last opponent M.Bison.
 
+### Installing (the setup app)
+
+The setup app (and `sfa3port.py setup --psp`, `SFA3-Setup --convert IMAGE
+FOLDER PSP-IMAGE`) takes the player's PSP image next to the Dreamcast disc.
+`tools/pipeline.py`'s `addon` step, after the recompile:
+
+1. `psp_iso.py` reads the image (ISO 9660: an `.iso`, a `.cso` (CISO,
+   raw-deflated 2048-byte blocks) or either inside a `.zip`, unzipped to a
+   temporary file) and writes `PSP_GAME/SYSDIR/BOOT.BIN` and
+   `PSP_GAME/USRDIR/usa/data/` to `<data>/psp` (about 155 MB, kept: an
+   update rebuilds the add-on from it without the image). `BOOT.BIN`'s SHA-1
+   names the release (`ULUS-10062`, `3fd0abf7...`).
+2. `align.write_maps` (7 s) writes `<data>/psp_maps.json`.
+3. `build_char.build` (about 4 minutes, the tile conversions) writes the C
+   and the files to `<data>/psp_out`; any problem fails the step.
+4. The files (PAC/BIN) go to `<data>/addon`, named in `files.txt`; the C
+   (`psp_*.c`) is added to the generated sources (the Zig build; CMake finds
+   `build/psp_out` itself), and `psp_none.c` (in the runtime library) isn't
+   linked then. `install.json` gets `"psp_characters": true`.
+
+The game (`hle_init`): built with the add-on (`g_psp_char_data_size` not 0),
+it reads `<data>/addon/files.txt` and serves each file in place of the
+disc's or as a new one (`gdi_provide`: replaced if the disc has it, else
+added; up to 64 such files). Without the list (and no `SFA3_ADD`) it stops
+with a message: its code can't run on the Dreamcast's files (the HUD, the
+select screens). Netplay's build id mixes in the add-on's data, so a game
+with it only meets one with the same add-on.
+
+A full install with the add-on takes about 9 minutes (12 threads), an update
+4.5 (the add-on is converted again each time).
+
 ### The ranking
 
 Score Ranking (Mode Menu): the lists draw each entry's character's face from

@@ -26,6 +26,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "chartables.h"
 #include "cpu.h"
 #include "input.h"
 #include "lobby.h"
@@ -167,6 +168,9 @@ static uint32_t build_id(void) {
     if (s_build) return s_build;
     uint32_t h = 2166136261u ^ PROTOCOL;
     for (uint32_t i = 0; i < g_main_image_size; i += 64) h = (h ^ g_main_image[i]) * 16777619u;
+    /* the PSP characters add-on changes the game (its select screens, tables): a game with it only
+     * plays one with the same add-on */
+    for (uint32_t i = 0; i < g_psp_char_data_size; i++) h = (h ^ g_psp_char_data[i]) * 16777619u;
     return s_build = h ? h : 1;
 }
 

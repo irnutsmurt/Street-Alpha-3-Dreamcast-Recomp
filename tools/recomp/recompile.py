@@ -82,12 +82,13 @@ def extra_entries():
 
 
 def _chartables():
-    import importlib.util
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "psp", "chartables.py")
-    spec = importlib.util.spec_from_file_location("chartables", path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+    """tools/psp/chartables.py (the packaged app has it among its modules)"""
+    import sys
+    psp = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "psp")
+    if os.path.isdir(psp) and psp not in sys.path:
+        sys.path.append(psp)
+    import chartables
+    return chartables
 
 
 def immediate_value(img, a):
