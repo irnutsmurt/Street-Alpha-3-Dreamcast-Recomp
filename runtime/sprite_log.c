@@ -7,6 +7,7 @@
  * with its object, bank, part number and the caller, to find which object
  * draws what on a screen.
  * SFA3_SPRITE_FIND=<part>: where a part number is drawn (any bank, any frame).
+ * SFA3_SPRITE_NEW=1: each (object type, sub-type, bank, part) the first time it's drawn.
  * Always: a part number past its bank's records is logged (the first 20). */
 #include <stdlib.h>
 
@@ -48,6 +49,23 @@ void hle_sprite_draw(void) {
                   "+94 %X) anim %08X caller %08X",
                   (rec - base) / 12, R16(obj + 0x46), R32(base) / 12, (unsigned long long)g_vblank_count, obj,
                   R8(obj + 2), R8(obj + 3), R8(obj + 0x39), R8(obj + 0x79), R32(obj + 0x94), R32(obj + 0x1C), g.pr);
+        }
+    }
+    {   /* SFA3_SPRITE_NEW=1: each (object type, sub-type, bank, part) the first time it's drawn, with the frame */
+        static int on = -1, n;
+        static uint32_t seen[4096];
+        if (on < 0) on = getenv("SFA3_SPRITE_NEW") != NULL;
+        uint32_t obj = g.r[5], rec = g.r[6], base = g.r[7];
+        if (on && n < 4096 && rec >= base) {
+            uint32_t key = R8(obj + 2) << 24 | R8(obj + 3) << 16 | (R16(obj + 0x46) & 0xFF) << 12 | ((rec - base) / 12 & 0xFFF);
+            int i = 0;
+            while (i < n && seen[i] != key) i++;
+            if (i == n) {
+                seen[n++] = key;
+                logf_("sprite new: frame %llu obj %08X type %02X/%02X bank %X part %X char %02X pal %X pos %d,%d",
+                      (unsigned long long)g_vblank_count, obj, R8(obj + 2), R8(obj + 3), R16(obj + 0x46), (rec - base) / 12,
+                      R8(obj + 0x39), R8(obj + 0xD), (int16_t)R16(obj + 0x12), (int16_t)R16(obj + 0x16));
+            }
         }
     }
     if (frame && (onward ? g_vblank_count >= frame && logged++ < 400 : g_vblank_count == frame)) {

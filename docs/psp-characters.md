@@ -653,7 +653,20 @@ The PSP's engine differs from the Dreamcast's in its objects:
   11, 19...);
 - types 73, 77 and 79 have more sub-types (73: 49 to the Dreamcast's 43);
   Maki's and Ingrid's endings use them;
-- Ingrid's actors get her effects (`0x1D513C`, `0x1C8EC0`).
+- Ingrid's actors get her effects (`0x1D513C`, `0x1C8EC0`);
+- characters' VS-screen portraits slide through scenes (Rose's, Bison's and
+  Ingrid's in Ingrid's ending): type 74 (`0x1CB178`) with an animation
+  number below `0x80`, and a type 73 sub-type (`0x1C96AC`), take bank `0xB`
+  (the select screen's, `select_u.pac` banks 8 and `0xB`: `0x10140` loads
+  it again if it's gone), the 32x32 way, and the animation from the table
+  `0x223A4C` (indexed by a fighter's +`0x182` in a fight; the ending's entry
+  1): `0x2237AC`, the VS portraits' records (42, one per character; the
+  Dreamcast's `8C0BEB3C`, 38), whose part numbers are the PSP's bank B's.
+  The Dreamcast's type 74 has only the ending's own records. `screens.py`
+  already copies the Dreamcast's groups with the new characters' records
+  to the extension RAM: those are the PSP groups' counterparts
+  (`screen_info["psp_groups"]`, `Build.map_data`), so the copied table
+  points there. The palettes are the ending's (the actor's palette base).
 
 So the PSP's object handlers run for these endings: the build recompiles
 the handlers of types 72-80 (`ENDING_HANDLERS`, as `0x1DB21C` installs
@@ -689,6 +702,24 @@ too.
 The voted globals inside the object arrays (fighters, projectiles, pools)
 are dropped: a region starting inside an array hid the array's translation
 for the addresses after it (`0x80B408`, player 2, had none).
+
+The closing screen (type 76, the PSP's `0x1D548C`): the Dreamcast's last
+step makes it in every ending; the PSP's engine never does (no actor record
+or code makes a type 76: its handler is dead code there). Its logo's part
+(object +`0x54` on the PSP, +`0x44` here) comes from the PSP's ending state
++`0x138`, which `0x1DB21C` zeroes and nothing writes; the Dreamcast keeps a
+struct of its own there (`8C1A330C`: Maki's ending drew her part 1, a big
+blob, over PRESENTED BY). The PSP's banks have the logo as their own part
+(the Dreamcast's pixels: `end26` `0x6A`, `end27` 0, `end28` 5, `end29`
+none), so `ending.py` (`bank19`) finds it in the character's bank, or
+copies `END00`'s into it (Ingrid's: part `0x5D`), and puts its number after
+the mark; the recompiled handler reads it there (`build_char.py`
+`ENDING_REPLACE`: `mipsgen.REPLACE` gives the `lw` at `0x1D54FC` other C,
+`psp_ending_logo()` in `psp_load.c`). Its palette (`0x2B2978`, 16 colours,
+`0x6EA8` = `f_8C015AF6` copies it to slot 0) is the Dreamcast's
+`8C80AC64` with red and blue swapped: `ENDING_PALETTES` swaps them back
+when the ending data is copied. The PSP's draw modes are the Dreamcast's
+(table `0x200B48`; mode 3 `0x870C` the pose from part +`0x54`).
 
 build/test/arc_end.sh `<name> <moves> <stages>`: arcade won stage after
 stage, then shots through the ending; `STAGE=9` puts the stage counter at
@@ -846,6 +877,7 @@ her effect objects add small offsets to her base (`p_1C7974`).
 | `SFA3_POKE_EVERY=<hex address>:<value>,...` | write guest bytes every frame (up to 8) |
 | `SFA3_MMIO_BT=<hex address>` | the host call stack of the first access to that 16 MB area |
 | `SFA3_SPRITE_FIND=<hex part>` | the first 20 draws of that sprite part, any bank |
+| `SFA3_SPRITE_NEW=1` | each (object type, sub-type, bank, part) the first time it's drawn, with the frame, object, character, palette and position (4096 at most) |
 
 ## Test scripts (`build/test`, not in the repository)
 

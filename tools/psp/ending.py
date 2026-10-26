@@ -26,7 +26,9 @@ ending's state and gives word 11 to f_8C0218B6. The directory:
        bytes: the characters to type, then one or two lines, each an x
        position and its text to a NUL; packed here)
   [11] the PSP directory's [5]: (texture, palette) byte pairs to 0xFF
-  [12] not read by the code; here: the add-on's mark (below)
+  [12] the closing screen's logo (Capcom's): its part number in sprite
+       bank 0x19 (the screen's object, type 76, draws from it by mode 3:
+       8C0179F2; read as a u16); here: the add-on's mark (below)
 The PSP's directories are in BOOT.BIN (a table at 0x2B34B0 by character),
 next to the data they point to; its relocations mark the pointers. Records
 in 0x20001 and 0x20002 name parts of sprite bank 0x19 by number: the
@@ -42,7 +44,18 @@ Eagle's file) the fighter that isn't M.Bison's; 0x20001's pose numbers are
 those fighters' own. The Dreamcast's endings have copies of those sprites
 in bank 0x19 instead. The runtime does as the PSP (hle_ending_anim on
 f_8C024AD4), for an ending whose directory word 12 points at the mark:
-"PSPE", then 0x20001's records' start and end.
+"PSPE", then 0x20001's records' start and end, then the logo's part.
+
+The closing screen (THANK YOU FOR PLAYING, PRESENTED BY, the logo, the
+url): the Dreamcast's last step (8C800C30) makes it, object type 76, in
+every ending. The PSP's handler for it (0x1D548C) takes the logo's part from
+its ending state's +0x138, which its setup zeroes and nothing else writes
+(the PSP makes no type 76 object: dead code there); the Dreamcast keeps
+another struct at the state's +0x138 (8C1A330C). The PSP's banks have the
+logo as their own part (end26 0x6A, end27 0, end28 5; end29 none): the add-on
+finds it (the template's logo, pixel for pixel), or copies it into the bank
+from a Dreamcast ending's, and the recompiled handler reads it from the mark
+(build_char.py REPLACE, psp_load.c psp_ending_logo).
 
 The PSP's object handlers run for these endings in place of the
 Dreamcast's (build_char.py ENDING_HANDLERS, psp_load.c hle_ending_setup).
@@ -66,6 +79,7 @@ import sys
 
 import mipsgen
 import pac
+import sprites
 
 NEW = (0x26, 0x27, 0x28, 0x29)
 BASE = 0x8C800000
@@ -78,7 +92,8 @@ PSP_DIR_WORDS = 6
 SHARED = 0x2C5E60          # the PSP's palettes the endings share: from here
 DC_FROM_PSP = (1, 6, 7, 8, 9, 11)   # directory words from the PSP directory's 0-5
 LINE = 128                 # the PSP's text: a line per 128 bytes
-MARK = b"PSPE"             # directory word 12 -> MARK, 0x20001's records' start and end (hle_ending_anim)
+MARK = b"PSPE"             # directory word 12 -> MARK, 0x20001's records' start and end (hle_ending_anim), the logo's part
+LOGO_FROM = "END00"        # the Dreamcast ending whose closing logo (directory word 12's part) the add-on looks for / copies
 TEXTURES_SHARED = range(0x10000C00, 0x10000C17)
 TEXTURE_JP = 0x10000900
 
@@ -169,8 +184,9 @@ class Overlay:
         return a
 
 
-def overlay_data(boot, c, secs):
-    """the character's ending data laid out from CODE_END: (bytes, directory words)"""
+def overlay_data(boot, c, secs, logo=0x8000):
+    """the character's ending data laid out from CODE_END: (bytes, directory words); logo: the closing
+    screen's logo's part in bank 0x19 (0x8000: none)"""
     p = Psp(boot, c)
     o = Overlay()
     where = {}
@@ -198,7 +214,7 @@ def overlay_data(boot, c, secs):
         return b"".join(struct.pack("<I", 0 if i == 0xFFFF else recs + size * i) for i in idx[:-1])
     d = [0] * DIR_WORDS
     r1 = o.put(secs[0x20001], 4)
-    d[12] = o.put(MARK + struct.pack("<II", r1, r1 + len(secs[0x20001])))
+    d[12] = o.put(MARK + struct.pack("<III", r1, r1 + len(secs[0x20001]), logo))
     d[2] = o.put(table(r1, 10, secs[0x20003]))
     d[3] = o.put(secs[0x20005])
     r2 = o.put(secs[0x20002], 4)
@@ -238,9 +254,9 @@ def templates(dc_dir):
     return sorted(out, key=lambda t: -t[0])
 
 
-def overlay(boot, c, secs, dc_dir):
+def overlay(boot, c, secs, dc_dir, logo):
     """ENDnn.BIN for character c: (bytes, the template's name)"""
-    data, d = overlay_data(boot, c, secs)
+    data, d = overlay_data(boot, c, secs, logo)
     room, name, t = templates(dc_dir)[0]
     assert len(data) <= room, f"ending {c:02X}: {len(data)} bytes of data, room for {room}"
     dir_at, _ = dc_directory(t)
@@ -251,8 +267,41 @@ def overlay(boot, c, secs, dc_dir):
     return bytes(out), name
 
 
-def archive(secs, template_pac):
-    """ENDnn.PAC: the shared sections from a Dreamcast ending's archive, the PSP's for the character"""
+def part_pixels(b, k):
+    """a part's size and its tiles' pixels (linear) and attributes"""
+    rec, tl = b.records[k]
+    return rec[4:], [None if e is None else (bytes(b.tile_pixels(e[0])), e[1]) for e in tl]
+
+
+def bank19(secs, dc_dir):
+    """the character's sprite bank 0x19 the Dreamcast's way (tiles twiddled) with the closing screen's logo:
+    (parts section, tiles section, the logo's first part). The logo is a pose (parts to the one whose +10 is 0)
+    the same in every ending; the PSP's are their own part, or none (then the Dreamcast's is copied in)."""
+    ref_bin = open(os.path.join(dc_dir, LOGO_FROM + ".BIN"), "rb").read()
+    t = pac.sections(open(os.path.join(dc_dir, LOGO_FROM + ".PAC"), "rb").read())
+    ref = sprites.Bank(t[0x1000019], t[0x2000019], True)
+    k0 = dc_directory(ref_bin)[1][12] & 0xFFFF
+    pose = [k0]
+    while ref.records[pose[-1]][0][10]:
+        pose.append(pose[-1] + 1)
+    want = [part_pixels(ref, k) for k in pose]
+    b = sprites.Bank(secs[0x1000019], pac.convert_tiles(secs[0x2000019]), True)
+    for k in range(len(b.records) - len(pose) + 1):
+        if all(b.records[k + i][0][4:] == ref.records[q][0][4:] for i, q in enumerate(pose)) and \
+                [part_pixels(b, k + i) for i in range(len(pose))] == want:
+            logo = k
+            break
+    else:
+        logo = len(b.records)
+        for q in pose:
+            b.add_part(ref, q)
+    parts, tiles = b.encode()
+    return parts, tiles, logo
+
+
+def archive(secs, template_pac, parts, tiles):
+    """ENDnn.PAC: the shared sections from a Dreamcast ending's archive, the PSP's for the character (sprite
+    bank 0x19: bank19's)"""
     t = pac.sections(template_pac)
     tags = [0x0, 0x10] + list(TEXTURES_SHARED)
     out = {0x0: t[0x0], 0x10: secs[0x10]}
@@ -263,8 +312,8 @@ def archive(secs, template_pac):
         out[k] = texture(secs[k])
     tags += [TEXTURE_JP, 0x1000019, 0x2000019]
     out[TEXTURE_JP] = t[TEXTURE_JP][:32] + bytes(len(t[TEXTURE_JP]) - 32)
-    out[0x1000019] = secs[0x1000019]
-    out[0x2000019] = pac.convert_tiles(secs[0x2000019])
+    out[0x1000019] = parts
+    out[0x2000019] = tiles
     return pac.build(tags, out)
 
 
@@ -274,8 +323,9 @@ def build(boot, psp_data, dc_dir, out_dir, chars=NEW):
     out = []
     for c in chars:
         secs = pac.sections(open(os.path.join(psp_data, f"end{c:02x}_u.pac"), "rb").read())
-        b, tname = overlay(boot, c, secs, dc_dir)
-        a = archive(secs, tpac)
+        parts, tiles, logo = bank19(secs, dc_dir)
+        b, tname = overlay(boot, c, secs, dc_dir, logo)
+        a = archive(secs, tpac, parts, tiles)
         for name, data in ((f"END{c:02X}.BIN", b), (f"END{c:02X}.PAC", a)):
             open(os.path.join(out_dir, name), "wb").write(data)
             out.append((name, len(data), tname))

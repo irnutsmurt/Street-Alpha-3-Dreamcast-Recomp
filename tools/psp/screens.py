@@ -241,8 +241,12 @@ def build(dc_select, psp_select, main, boot):
                  (0x8C06F85A, 0xAE + 24), (0x8C06F868, 0xAE + 24), (0x8C06F892, 0xBE + 24), (0x8C06F8A4, 0xBE + 24)):
         patches.append((chartables.immediate(a), struct.pack("<I", v)))
     assert data <= chartables.EXT_END, "the select screens' records outgrew their room"
+    # the PSP's VS groups (42 records, its bank B / 8 numbering) have these as counterparts: the ending's
+    # portraits (types 73 and 74, build_char.py) read them through a table of the PSP's (0x223A4C)
+    psp_groups = [(PSP_VS_PORTRAITS, PSP_VS_PORTRAITS + 8 * 42, groups[VS_PORTRAITS]),
+                  (PSP_VS_NAMES, PSP_VS_NAMES + 8 * 42, groups[VS_NAMES])]
     return pac.build(pac.order(dc_select), d), patches, dict(portrait_palettes=base, layout_extras=extras,
-                                                             vs_palette_shift=vs_shift)
+                                                             vs_palette_shift=vs_shift, psp_groups=psp_groups)
 
 
 def main():
