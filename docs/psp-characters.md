@@ -489,13 +489,14 @@ Built so far (`files.py`):
   dialogue is in the character file (word 38, entry 1).
 
 - `PLnn.PAC`: the PSP's sprite parts, tiles (twiddled), palettes (red and
-  blue swapped), animation sections `0xA` and `0xD`; Ryu's sound sections.
-  Section `0x10000E00` is the move list (a 256x256 texture for the pause
-  menu's ATTACK LIST; the PSP's is linear, ABGR1555): converted
-  (`pac.convert_texture`). The PSP's four new move lists name the moves in
-  Japanese (the banner is English), as the PSP itself shows them. Each
-  version packs its textures its own way (the PSP's Ryu has a piece more at
-  the start), so the texture has to match the rows table (below).
+  blue swapped), the voice records (`0xD`, converted) and banks
+  (`sound.py`).
+  The move list (the pause menu's ATTACK LIST): section `0xA` (bank `0x1E`'s
+  parts) and `0x10000E00` (their cells, a 256x256 texture; the PSP's is
+  linear, ABGR1555: `pac.convert_texture`). The PSP's US release has no
+  move list screen, and its archives keep the Japanese version's lists for
+  the four new characters (Japanese names, notes and button strengths; the
+  banner English): `movelist.py` makes them English (below).
 - `OPnn.PAC`: bank `0x15` (the portrait and the screen's frame; parts 0-3
   and 11-14 are the frame, which the PSP draws differently: its own kept),
   palettes (68, swapped) and after them the text: personal data (10 lines of
@@ -899,6 +900,26 @@ byte for byte the same), but it lengthened some of the old characters' lists
 Dreamcast's of the same rank (chartables kind `ptr_rank`): Eagle the second,
 Maki the seventh, Yun and Ingrid the eighth. Without it the new characters'
 rows were whatever followed the table (every line showing the banner).
+
+The English move lists (`movelist.py`), all from the player's discs:
+- The font: the Dreamcast's English lists' name lines (`SAMPLES`: 21
+  characters' names, in the order of their 10x2 parts), cut into letters
+  where a column has no letter pixel (a letter's own pixels, not its shadow:
+  shadows touch the next letter), kept where a name's pieces match its
+  letters (a pair that touches, like "ky", is skipped); each letter the
+  shape most samples give. `+ - : , / ( )` (not in any name) are drawn in
+  the same style. Gaps: 2 columns letter to letter, 8 for a space.
+- A move's name: left at x 1, up to the -ism icons; a name too wide comes
+  with the letters closer, then squeezed.
+- The command: the PSP line's cells with colour in them (motions, buttons:
+  `icon()`) kept in order, the white ones (Japanese) dropped; `LISTS` gives
+  each move's line as text with `@` for those cells (the counts checked),
+  each piece of text in cells of its own.
+- The -ism icons: the Dreamcast's cells showing the same letters (by
+  colour: X red, A green (the PSP's Z), V blue, LV3 yellow; the icons
+  straddle cells), from a list whose name doesn't run into them.
+- The tabs: Ryu's (MISC. / SPECIAL TECHNIQUES, SUPER COMBOS).
+- A new texture of the cells used (139-201 of 256) and the parts again.
 
 ### Pre-fight dialogues (arcade)
 

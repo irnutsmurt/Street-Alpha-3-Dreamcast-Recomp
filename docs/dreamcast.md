@@ -202,7 +202,8 @@ from offset 8; the header is `0x800` bytes and each section `0x800`-aligned.
 | `00100000` | sprite parts |
 | `00200000` | sprite tiles: u32 offsets (one per tile), then the packed tiles |
 | `00400000` | palettes (`0x3C0`) |
-| `0000000A`, `0000000D` | (unknown) |
+| `0000000A` | the ATTACK LIST's layout: sprite bank `0x1E`'s parts (to `8C7FEE00`), made of the 16x16 cells of the texture `10000E00` |
+| `0000000D` | the voice records (64 x 16 bytes) |
 | `10000E00` | a PowerVR texture (GBIX + PVRT, 256 x 256 ARGB1555 twiddled) |
 | `40000002` | sound: `SOSB` bank |
 | `20000005` | sound: `SMPB` bank |
@@ -523,11 +524,20 @@ Dreamcast's `0x60B`.
 
 ## Pause menu: ATTACK LIST
 
-The move list (Training's pause menu, ATTACK LIST) draws rows of the
-character's texture (`PLnn.PAC` section `0x10000E00`) picked by a record
-from `8C0D5064`[character] (`8C08FA32`: record[scroll position x 4 + line]
-+ 18 is the texture row); nine shared records `8C0D4EFA`-`8C0D502A`, one per
-list length.
+The move list (Training's pause menu, ATTACK LIST) is sprite bank `0x1E`:
+its parts are the character archive's section `0xA` (loaded to
+`8C7FEE00`), whose tiles are the 16x16 cells of the texture `10000E00`
+(cell n at column n % 16, row n / 16; the tile entry's third byte an
+attribute: 0x20 text, 0x21-0x23 icons, 0x25 the tabs, 0x26-0x2B the six
+colours' markers). Parts 0-5 and 20 are the frame, 6-17 the LEFT / RIGHT
+markers, 18-19 the name banner, 21-23 the tabs (MISC., SPECIAL, SUPER),
+then a 10x2 part a move: the name and the -ism icons (X, A, V, LV3; cells
+8-9, or 6-9) on the top line, the command on the bottom one. Which move
+shows on which line comes from a record picked by `8C0D5064`[character]
+(`8C08FA32`: record[scroll position x 4 + line] + 18 is the part); nine
+shared records `8C0D4EFA`-`8C0D502A`, one per list length. The font is a
+white letter (`FBDE`) with a one-pixel shadow (`8842`) right and below,
+capitals on rows 2-12.
 
 ## Arcade endings
 

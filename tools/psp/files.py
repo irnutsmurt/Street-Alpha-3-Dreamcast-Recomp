@@ -4,11 +4,12 @@ sections the PSP's doesn't have, and the order).
 
   PLnn.PAC  the character's archive (pl26_u.pac ...): sprite parts, tiles
             (twiddled), palettes (red and blue swapped; 5 a colour choice:
-            Ingrid's 8 cut to their first 5) and the animation
-            section 0xA from the PSP's; the voice bank (SOSB), the KO
-            echo's (SMPB) and the voice records (0xD) converted (sound.py);
-            the move list's texture (0x10000E00: the pause menu's ATTACK
-            LIST; the PSP's names the moves in Japanese, as the PSP shows it)
+            Ingrid's 8 cut to their first 5) from the PSP's; the voice bank
+            (SOSB), the KO echo's (SMPB) and the voice records (0xD)
+            converted (sound.py); the move list (the pause menu's ATTACK
+            LIST: section 0xA, sprite bank 0x1E's parts, made of the 16x16
+            cells of the texture 0x10000E00), the PSP's Japanese one made
+            English (movelist.py)
   OPnn.PAC  the arcade prologue on the world map (op26_u.pac ...): bank 0x15
             (the portrait and the screen's frame), and after its palettes
             the text: the personal data (the PSP's section 0x10004, the same
@@ -33,6 +34,7 @@ import os
 import struct
 import sys
 
+import movelist
 import pac
 import sound
 
@@ -43,8 +45,9 @@ PERSONAL = 180            # 10 lines of 18 bytes
 STORY_PSP, STORY_DC, STORY_BLOCKS = 128, 69, 4
 
 
-def pl_file(psp, dc):
-    """psp: the PSP's plNN_u.pac; dc: a Dreamcast character archive (PL00.PAC)"""
+def pl_file(psp, dc, cid=None, dc_dir=None):
+    """psp: the PSP's plNN_u.pac; dc: a Dreamcast character archive (PL00.PAC); with the
+    character and the Dreamcast files, its move list in English (movelist.py)"""
     s, d = pac.sections(psp), pac.sections(dc)
     d[0x100000] = s[0x100000]
     d[0x200000] = pac.convert_tiles(s[0x200000])
@@ -54,6 +57,8 @@ def pl_file(psp, dc):
                                                     d[0x40000002], d[0x20000005])[:2]
     d[0xD] = sound.voice_records(s[0xD])
     d[0x10000E00] = pac.convert_texture(s[0x10000E00], d[0x10000E00])  # the move list
+    if cid in movelist.LISTS and dc_dir:
+        d[0xA], d[0x10000E00] = movelist.english(cid, d, dc_dir)
     return pac.build(pac.order(dc), d)
 
 
@@ -142,7 +147,8 @@ def build(psp_data, dc_dir, out_dir, chars=NEW, kinds=KINDS):
     for kind, (psp_name, template, conv) in kinds.items():
         dc = open(os.path.join(dc_dir, template), "rb").read()
         for c in chars:
-            data = conv(open(os.path.join(psp_data, psp_name.format(c)), "rb").read(), dc)
+            src = open(os.path.join(psp_data, psp_name.format(c)), "rb").read()
+            data = conv(src, dc, c, dc_dir) if conv is pl_file else conv(src, dc)
             name = f"{kind}{c:02X}.PAC"
             open(os.path.join(out_dir, name), "wb").write(data)
             out.append((name, len(data)))

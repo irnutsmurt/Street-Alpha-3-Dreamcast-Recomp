@@ -87,7 +87,7 @@ def winpath(p):
 
 # the PSP characters add-on's tools (tools/psp; build_char imports most of them inside functions)
 PSP_MODULES = ["psp_iso", "align", "build_char", "chartables", "screens", "ranking", "menus", "hud", "worldtour",
-               "files", "ending", "throws", "arcade", "sound", "sprites", "pac", "mipsgen", "mips"]
+               "files", "movelist", "ending", "throws", "arcade", "sound", "sprites", "pac", "mipsgen", "mips"]
 
 
 def pyinstaller(platform, dist):
