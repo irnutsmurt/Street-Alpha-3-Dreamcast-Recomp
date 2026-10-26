@@ -2,10 +2,22 @@
  "_about": "PSP -> Dreamcast mappings confirmed by hand where align.py has too few votes. Addresses only, no game data.",
  "globals": [
   [
+   "0x80f8d0",
+   "0x80f8f0",
+   "0x8c188818",
+   "background layer 1, laid out as the camera to +0x20 (the PSP's layers 0xA0 apart, the Dreamcast's 0x9C): Ingrid's code sets the three layers' X (+0x12) and Y (+0x16) together"
+  ],
+  [
    "0x80f970",
    "0x80f990",
    "0x8c1888b4",
-   "camera / scroll position (16.16 X at +0x10)"
+   "camera / scroll position (16.16 X at +0x10), background layer 2"
+  ],
+  [
+   "0x80fa10",
+   "0x80fa30",
+   "0x8c188950",
+   "background layer 3, the same (align.py had its +0x10 and +0x16 right, its +0x12 as layer 1's)"
   ],
   [
    "0x39c9e0",
