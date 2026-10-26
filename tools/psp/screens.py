@@ -51,6 +51,10 @@ VS_GRID, VS_LAYOUT = 0x8C0C1D84, 0x8C0C0714
 VS_CELLS = {0x26: 1, 0x27: 2, 0x28: 4, 0x29: 5}  # the PSP's fifth row: Eagle, Maki, (random), Yun, Ingrid
 VS_ROW, VS_ENTRIES_Y, VS_ROW_Y = 5, 80, 56
 NAME_COPIES = (0x8C0AB820, 0x8C0C0D26)  # tables holding the same name parts as NAMES
+# the pre-fight dialogue's faces: a bank 8 part (a chain) per character, the face object's
+# (type 14, id 6: 8C06A8BA) +0x44 (8C06A948); its palette is the VS portrait's (f_8C069D34).
+# The PSP's numbers are the Dreamcast's less 0x3B, and four more
+DIALOGUE_FACES, PSP_DIALOGUE_FACES = 0x8C0C0E04, 0x226098
 # the VS screen's portraits: objects set their animation to group + 8 x
 # character, the group from ANIM_GROUPS (a pointer per kind of object). Two
 # groups of 8-byte records (one part each, a chain: the part records' byte 10
@@ -181,6 +185,9 @@ def build(dc_select, psp_select, main, boot):
     for c in NEW:  # the names' other tables
         for a in NAME_COPIES:
             patches.append((tables[a].ext + 2 * c, struct.pack("<H", part8(PSP_NAMES[c]))))
+    for c in NEW:  # the dialogue faces
+        k = add_chain(b8, p8, struct.unpack_from("<H", boot, PSP_DIALOGUE_FACES + 0x74 + 2 * c)[0])
+        patches.append((tables[DIALOGUE_FACES].ext + 2 * c, struct.pack("<H", k)))
     d[0x01000008], d[0x02000008] = b8.encode()
     # the VS portraits' palettes: after the big portraits', where the
     # Dreamcast's index (0x148 + 24 x character) can reach them with a

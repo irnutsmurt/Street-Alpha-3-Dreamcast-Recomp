@@ -361,7 +361,8 @@ have the PSP's 42-entry layout.
 Added in 0.2.2: the ATTACK LIST's rows (`8C0D5064`, kind `ptr_rank`), the
 pre-fight dialogue choices (`8C0A8468`, and `8C0A8490` / `8C0A8508` a row
 each, 44 bytes apart, with `chartables.REPLACE` changing the code's row
-stride), and the arcade select's character cells (`8C0BE53C`: (column, row)
+stride), the dialogue faces (`8C0C0E04`), and the arcade select's character
+cells (`8C0BE53C`: (column, row)
 per character, where the cursor starts, e.g. after a continue; the PSP's
 `0x2230B7`; without it Yun's cursor started on Maki's cell). The versus
 select's twin (`8C0C2140`) was moved already.
@@ -922,6 +923,15 @@ its own, 44 bytes apart, and the code's row x 40 becomes row x 44
 C in the recompiled code, `codegen.REPLACE`). The new characters' entries:
 `8C0A8468` Eagle 3, Maki none, Yun 4, Ingrid 0; `8C0A8490` rows 0 / 1 / 2:
 all 0 / all 2 / 4 4 5 4; `8C0A8508` rows 0 / 1: all 1 / none, 3, 3, 3.
+
+The speakers' faces are objects of type 14, id 6 (`8C06A8BA`), one per
+fighter, spawned by the stage object's first state: the face is a
+`SELECT.PAC` bank 8 part (a chain) from `8C0C0E04`[character] (u16,
+`8C06A948`), its palette the VS portrait's (`f_8C069D34`). The new
+characters read past the table (`0x8000`: nothing, for Eagle and Maki): the
+moved table gets the PSP's (`0x226098`; its part numbers are the
+Dreamcast's less `0x3B`), the four faces (PSP parts `0x2E7`-`0x2EA`, 96x48)
+added to bank 8 (`screens.py`).
 
 The dialogue's extra sprites are bank `0x1A` from `BDnn.PAC`: tiles at
 `8CA30000`, parts at `8CA3E000` (the banks' default places `8C09AF10` /
