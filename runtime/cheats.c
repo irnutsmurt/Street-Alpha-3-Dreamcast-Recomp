@@ -19,7 +19,10 @@
  * level - 1 (+6, +7 presumably A and V), +8 EXP, +0x0C / +0x10 / +0x14 X-,
  * A-, V-ism EXP. The game raises a level from these only after a fight won
  * with that -ism (one win took X-ism from level 1 to 32 with the cheat) and
- * saves the entry. In a World Tour fight the HUD labels the player I-ISM
+ * saves the entry. Each -ism level-up also raises the total level (+4), and
+ * the total stops at 32 for all three (f_8C031D40): with every -ism's EXP at
+ * the most, the first -ism won with takes all 31 level-ups. The game's own
+ * rule, kept (the user's choice, 2026-10-26). In a World Tour fight the HUD labels the player I-ISM
  * (f_8C0630DC: style 3 for a fighter with an entry, fighter +0x2F0), as on
  * the disc.
  *

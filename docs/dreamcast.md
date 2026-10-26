@@ -505,8 +505,14 @@ Dreamcast's `0x60B`.
   (Select screens). An entry: +0 1 in use, +2 the -ism (sign), +4 the total
   level - 1, +5 the X-ism level - 1, +8 EXP, +0x0C / +0x10 / +0x14 the X-,
   A-, V-ism EXP, from +0x2E u16 stats. A fighter in a World Tour fight
-  points at its entry (fighter +0x2F0); a level goes up only after a fight
-  won with that -ism.
+  points at its entry (fighter +0x2F0). After a win, `f_8C031CA8` adds the
+  fight's EXP (fighter +0x140) to the -ism used (+0x0C + 4 x (+2 + 1), at
+  most 9999999) and `f_8C031D40` raises that -ism's level (+5 + index)
+  while its EXP passes the -ism's thresholds (u32 tables by level:
+  `8C0AAFFC` X, `8C0AB078` A, `8C0AB0F4` V); every level-up also raises the
+  total (+4) and the loop stops when the total reaches 31 (level 32), or
+  does nothing when it's there already. So the three -isms share 31
+  level-ups. `f_8C031DEC` adds the stat gains for each.
 - The fight HUD's -ism label (`f_8C0630DC`): part `8C0BE1F4`[style x 2 +
   side + 8 x kind], style 0 / 1 / 2 X / A / V from fighter +0x162's sign, 3
   for a World Tour fighter (its -ism kept at HUD +0x11), kind 0 plain, 1
