@@ -34,11 +34,17 @@ Status (2026-10-25):
 - World Tour: picking one goes through the map, the VS screen and the fight
   (World Tour, below). Checked with Yun to the first fight.
 - Endings: each new character's plays to the end (Endings, below; the
-  four checked with M.Bison as the last opponent).
-- Not yet: the ranking's portraits, the PSP-only command checker Yun
-  uses for command 0x20 (recompiled, but its button-configuration state is
-  PSP-only and starts zeroed), Ingrid's background-scroll variables
-  (PSP-only).
+  four checked with M.Bison as the last opponent), with the portraits that
+  slide through scenes and the closing screen's logo.
+- The ranking (The ranking, below): Score Ranking's lists show the new
+  characters' faces (checked with the four poked into the lists); their
+  ranking portraits (`RK26`-`RK29`, `RK_COM.PAC`) are built the
+  Dreamcast's way and checked offline (the screen that shows them wasn't
+  reached in testing).
+- Not yet: the PSP-only command checker Yun uses for command 0x20
+  (recompiled; it takes the PSP's default button layout, except in network
+  play, whose per-player state is PSP-only and zeroed), Ingrid's
+  background-scroll variables (PSP-only).
 
 ## The PSP program (`BOOT.BIN`)
 
@@ -725,6 +731,50 @@ build/test/arc_end.sh `<name> <moves> <stages>`: arcade won stage after
 stage, then shots through the ending; `STAGE=9` puts the stage counter at
 the last, `EXTRA="SFA3_FORCE_CHAR=1:A"` makes the last opponent M.Bison.
 
+### The ranking
+
+Score Ranking (Mode Menu): the lists draw each entry's character's face from
+the mode menu's archive (`MSEL.PAC`, sections 7/8/9: bank `0x12`), the part
+from a byte table by character (`8C0D2B01`; the other menu modules' copies
+`8C0D3045`, `8C0D3D1D`), mirrored by a u16 table (`8C0D2AB2`, copies
+`8C0D2FF6`, `8C0D3CCA`: its low byte to the face object's +`0xB`; the
+quad's flips come from the object's +`0x54`/+`0x58` in `8C0193A0`), 37
+entries each. A ranking entry (16 bytes at `8C09B33C`, 6 lists of `0x220`:
++0 the score (BCD), +4 the name, +8 the character, +13 newly entered)
+naming a new character read past them: garbage sprites, then upside-down
+faces. The PSP has the new faces after the others in its archive (parts
+`0x80` + `0x2C8C60`[character], 42 entries: Eagle `0xB3`, Maki `0xB4`, Yun
+`0xB5`, Ingrid `0xB6`) and the mirror bytes at `0x2C8C8A`; `menus.py` adds
+the faces to the Dreamcast's bank (parts `0xD6`-`0xD9`; their palettes are
+the Dreamcast's) and fills the six moved tables.
+
+The portrait screen (task `8C061C7E`, step `8C062072`, drawn by `8C07EAB4`):
+`f_8C01C8D0` loads `RK_COM.PAC` (bank `0x16`: name plates, part
+`8C0D2035`[character] + 2) and names[90 + position] (`RKnn.PAC`, bank
+`0x17`). The PSP's `rkNN.pac` are the Dreamcast's without their lead: the
+Dreamcast's files start with the portrait again (192 right, 96 down: the
+pose drawn from part 0), each sprite frame alone and each name strip alone
+(Ryu 16 parts, Ken 19, Akuma 11), then the PSP's order (the portrait, then
+name strip + frame pairs). Two animation tables by character (`8C0D1EA8`,
+`8C0D1F40`; the PSP's `0x236DA8`, `0x236E50`, 42) name the pairs: the
+PSP's records are the Dreamcast's with the lead taken off the part numbers.
+The palettes: the Dreamcast's 176 are the PSP's 194 with groups left out
+(the PSP keeps a tag in colour 0); `ranking.py` learns the index map from
+the characters both have (it rebuilds the Dreamcast's own palettes 6307 of
+6336 the same), builds `RK26`-`RK29` (lead + the PSP's parts; Eagle's lead
+33 parts), the animations (part numbers + the lead) in the extension RAM
+(`EXT_RANKING`) and `RK_COM.PAC` with the new name plates (the PSP's part
+2 + `0x2C8C36`[character]). Before, a new character's rk name was the next
+family's file (an OP file).
+
+The player's score is fighter +`0x140` (binary, the HUD's; dreamcast.md). A game that ends with a ranking score is saved
+with the entry (Entry Mode's name); the portrait screen didn't come up in
+the arcade runs tried (cleared or lost).
+
+build/test/rank_run.sh `<name> [commands]`: Mode Menu > Score Ranking >
+Arcade, the commands run first (e.g. `poke 8C09B344 38`: the first entry's
+character Eagle); `AFTER=` commands at the end (dumps).
+
 ### The CPU
 
 The CPU plays a character by a script (dreamcast.md, CPU players). The
@@ -840,8 +890,7 @@ her effect objects add small offsets to her base (`p_1C7974`).
 
 ## Gaps
 
-- The ranking's portraits (`rk`), the move list texture (`0x10000E00`),
-  the PSP's stages and music.
+- The move list texture (`0x10000E00`), the PSP's stages and music.
 - The rest of the character tables (Character tables, above).
 - A ranking entry or saved data naming a PSP character would read past the
   Dreamcast's tables without the add-on.
@@ -867,6 +916,7 @@ her effect objects add small offsets to her base (`p_1C7974`).
 | `SFA3_SPRITE_LOG=frame` | log that frame's sprite draws: object, bank, part, record, position, animation, caller (`frame+`: from that frame on, 400 lines at most) |
 | control `rtdump <file>` | the read trace (read-trace build only) |
 | control `poke <hex address> <decimal value>` | write a guest byte |
+| control `fill <hex address> <bytes> <value>` | write guest bytes (decimal count and value); the control queue holds 512 lines |
 | control `untilnz <hex address> [frames [button]]` | hold the queue until the guest u16 there isn't 0 (at most frames, default 6000), tapping player 1's button every 40 frames meanwhile |
 | control `untileq <hex address> <value> [frames [button]]` | the same until the guest byte is value (decimal); `untileq 8C17FBC6 3`: a round is on, `4`: it's over |
 | control `hold <1\|2> <buttons\|none>` | keep buttons held (`right+y`; `l`, `r` the triggers) |

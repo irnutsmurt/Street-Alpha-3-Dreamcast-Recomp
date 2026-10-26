@@ -850,7 +850,22 @@ def main():
     patches.append((EXT_ENDING, b.ending_area()))
     print(f"character tables: {len(patches)} entries and records for the new characters")
     patches += sel_patches
+    assert max(a + len(v) for a, v in sel_patches if chartables.EXT_SELECT <= a < chartables.EXT_END) <= \
+        chartables.EXT_RANKING
     print(f"select screen: SELECT.PAC {len(sel)} bytes, {len(sel_patches)} patches")
+    import ranking
+    rk_files, rk_patches, end = ranking.build(dc_dir, psp_data, b.boot.data, chartables.EXT_RANKING)
+    assert end <= chartables.EXT_END
+    for name, data in rk_files.items():
+        open(os.path.join(out_dir, name), "wb").write(data)
+    patches += rk_patches
+    print(f"ranking: {' '.join(sorted(rk_files))} ({len(rk_patches)} patches)")
+    import menus
+    msel, menu_patches = menus.build(open(os.path.join(dc_dir, "MSEL.PAC"), "rb").read(),
+                                     open(os.path.join(psp_data, "msel_u.pac"), "rb").read(), b.boot.data)
+    open(os.path.join(out_dir, "MSEL.PAC"), "wb").write(msel)
+    patches += menu_patches
+    print(f"menus: MSEL.PAC {len(msel)} bytes (the ranking's faces)")
     import hud
     pitu, hud_patches, hud_parts = hud.build(
         open(os.path.join(dc_dir, "PITU.PAC"), "rb").read(), open(os.path.join(psp_data, "pit_u.pac"), "rb").read(),
@@ -872,7 +887,7 @@ def main():
     import ending
     for name, size, template in ending.build(b.boot, psp_data, dc_dir, out_dir, [cid for cid, _ in pairs]):
         print(f"{name}: {size} bytes (the ending code of {template})")
-    patches += chartables.file_patches([k.lower() for k in files.KINDS] + ["end"])
+    patches += chartables.file_patches([k.lower() for k in files.KINDS] + ["end", "rk"])
     import throws
     throw_patches, end = throws.patches(dc_dir, psp_data, chartables.EXT_THROWS)
     assert end <= chartables.EXT_NAMES

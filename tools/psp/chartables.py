@@ -40,6 +40,7 @@ EXT_THROWS = 0x98E20000  # throw positions for the PSP characters as opponents (
 EXT_NAMES = 0x98E30000   # the add-on's file names (file_patches())
 EXT_ROUTES = 0x98E31000  # arcade routes (arcade.py)
 EXT_SELECT = 0x98E40000  # the select screens' records (screens.py)
+EXT_RANKING = 0x98E70000  # the ranking portraits' animations (ranking.py)
 EXT_END = 0x98E80000     # (build_char.py: the PSP-only variables from here)
 EXT_IMM = 0x98DFF000     # constants of the game's code the add-on can change (IMMEDIATES)
 
@@ -186,6 +187,17 @@ TABLES = [
       note="descriptor word 29's handlers; new types 47-58 (Maki 47-49, Yun 50 56 57, Eagle 51 52, Ingrid 53-55 58)"),
     T(0x8C0A9334, 4, None, count=43, entries=47, new=(),
       note="descriptor word 28's handlers; new types 43-46 (Eagle 43, Yun 44, Ingrid 45 46)"),
+    # --- the menus (tools/psp/menus.py fills the new entries) ---
+    T(0x8C0D2B01, 1, None, count=37, note="score ranking: a character's face, a part of MSEL.PAC's bank (8C082578)"),
+    T(0x8C0D3045, 1, None, count=37, note="the same, another menu module's copy (8C083E40)"),
+    T(0x8C0D3D1D, 1, None, count=37, note="the same, another menu module's copy (8C08AEAC and on)"),
+    T(0x8C0D2AB2, 2, None, count=37, note="score ranking: the face mirrored (u16; its low byte to the object's +0xB)"),
+    T(0x8C0D2FF6, 2, None, count=37, note="the same, the second module's copy"),
+    T(0x8C0D3CCA, 2, None, count=37, note="the same, the third module's copy"),
+    # --- the ranking's portraits (tools/psp/ranking.py fills the new entries) ---
+    T(0x8C0D2035, 1, None, count=37, note="the ranking portrait screen: the name plate, RK_COM.PAC part this + 2 (8C07EEBA)"),
+    T(0x8C0D1EA8, 4, None, count=38, note="the ranking portrait screen: an animation (8-byte records, RKnn.PAC parts; 8C07F130)"),
+    T(0x8C0D1F40, 4, None, count=38, note="the same, another animation (8C07F16E)"),
 ]
 
 

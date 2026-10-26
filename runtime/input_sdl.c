@@ -277,6 +277,10 @@ static void control_file(PadState *st) {
         machine_reset_request(atoi(arg));
     } else if (!strcmp(cmd, "poke")) {  /* poke <hex address> <value>: write a guest byte (debug) */
         W8((uint32_t)strtoul(arg, NULL, 16), (uint32_t)n);
+    } else if (!strcmp(cmd, "fill")) {  /* fill <hex address> <bytes> <value>: write guest bytes (debug) */
+        uint32_t a = (uint32_t)strtoul(arg, NULL, 16), len = 0, v = 0;
+        sscanf(line, "%*s %*s %u %u", &len, &v);
+        for (uint32_t k = 0; k < len; k++) W8(a + k, v);
     } else if (!strcmp(cmd, "ramdump")) {  /* ramdump <file>: write the 16 MB of guest RAM (debug) */
         FILE *f = fopen(arg, "wb");
         if (f) { fwrite(g_ram, 1, 16 << 20, f); fclose(f); logf_("ramdump %s", arg); }
