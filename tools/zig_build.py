@@ -301,9 +301,52 @@ def build_game(gen_dir, runtime_lib, out_exe, libs, zig=None, progress=None, log
         timings["per_file"] = (time.monotonic() - t0) / compiled
     if log:
         log(f"game code: {compiled} of {len(jobs)} files compiled, {len(jobs) - compiled} reused")
+    objects = [j[1] for j in jobs]
+    if cache_dir:  # drop objects this build no longer uses; list the ones it does (link_game alone, next time)
+        used = {os.path.basename(o) for o in objects}
+        for f in os.listdir(cache_dir):
+            if f.endswith(".o") and f not in used:
+                os.remove(os.path.join(cache_dir, f))
+        with open(os.path.join(cache_dir, OBJECTS), "w") as f:
+            f.write("".join(os.path.basename(o) + "\n" for o in objects))
+    try:
+        json.dump(timings, open(timings_path, "w"))
+    except OSError:
+        pass
+    return link_game(objects, runtime_lib, out_exe, libs, zig=zig, log=log, strip=strip, platform=platform,
+                     progress=lambda f, m: report(share + (1 - share) * f, m), timings_path=timings_path)
+
+
+OBJECTS = "objects.txt"  # in the object cache: the objects of the last build, in link order
+
+
+def cached_objects(cache_dir):
+    """the last build's objects (OBJECTS), or None if the list or any of them is missing"""
+    try:
+        names = open(os.path.join(cache_dir, OBJECTS)).read().split()
+    except OSError:
+        return None
+    objects = [os.path.join(cache_dir, n) for n in names]
+    return objects if objects and all(os.path.exists(o) for o in objects) else None
+
+
+def link_game(objects, runtime_lib, out_exe, libs, zig=None, progress=None, log=None, strip=True, platform=HOST,
+              timings_path=None):
+    """link the game's objects with the runtime library. progress(fraction, message): moves on how
+    long linking took last time (timings_path)"""
+    import json
+    import time
+    zig = zig or find_zig()
+    try:
+        timings = json.load(open(timings_path)) if timings_path else {}
+    except (OSError, ValueError):
+        timings = {}
+    link_est = float(timings.get("link", 15.0))
+    if log:
         log(f"linking {os.path.basename(out_exe)} (the game code and the port's runtime)...")
-    report(share, "Linking")
-    cmd = [zig, "cc", *target(platform), "-o", out_exe, *[j[1] for j in jobs], runtime_lib, *libs]
+    if progress:
+        progress(0.0, "Linking")
+    cmd = [zig, "cc", *target(platform), "-o", out_exe, *objects, runtime_lib, *libs]
     if strip:
         cmd.append("-s")
     kw = {"creationflags": 0x08000000} if os.name == "nt" else {}
@@ -314,23 +357,56 @@ def build_game(gen_dir, runtime_lib, out_exe, libs, zig=None, progress=None, log
             _, err = p.communicate(timeout=0.25)
             break
         except subprocess.TimeoutExpired:  # creep towards the end, never quite reaching it
-            report(share + (1 - share) * min(0.97, (time.monotonic() - t1) / link_est), "Linking")
+            if progress:
+                progress(min(0.97, (time.monotonic() - t1) / link_est), "Linking")
     if p.returncode:
         raise BuildError("linking failed:\n" + err[-3000:])
-    timings["link"] = time.monotonic() - t1
-    if cache_dir:  # drop objects this build no longer uses
-        used = {os.path.basename(j[1]) for j in jobs}
-        for f in os.listdir(cache_dir):
-            if f.endswith(".o") and f not in used:
-                os.remove(os.path.join(cache_dir, f))
-    try:
-        json.dump(timings, open(timings_path, "w"))
-    except OSError:
-        pass
+    if timings_path:
+        timings["link"] = time.monotonic() - t1
+        try:
+            json.dump(timings, open(timings_path, "w"))
+        except OSError:
+            pass
     if log:
         log(f"linked: {out_exe} ({os.path.getsize(out_exe) // (1 << 20)} MB)")
-    report(1.0, "Linking")
+    if progress:
+        progress(1.0, "Linking")
     return out_exe
+
+
+def _file_hash(h, path):
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+
+
+def objects_fingerprint(zig, platform=HOST, extra_cflags=()):
+    """what the game's objects depend on besides their C: the compiler, the target, the flags and the
+    runtime's headers (all of them: a change to any recompiles)"""
+    import hashlib
+    h = hashlib.sha1()
+    for part in (_zig_version(zig), TARGETS[platform], " ".join(CFLAGS + list(extra_cflags))):
+        h.update(part.encode() + b"\0")
+    rt = os.path.join(ROOT, "runtime")
+    for name in sorted(os.listdir(rt)):
+        if name.endswith(".h"):
+            h.update(name.encode() + b"\0")
+            _file_hash(h, os.path.join(rt, name))
+    return h.hexdigest()
+
+
+def link_fingerprint(runtime_lib, libs, zig, platform=HOST):
+    """what linking depends on besides the objects: the runtime library, the other libraries, the linker"""
+    import hashlib
+    h = hashlib.sha1()
+    h.update((_zig_version(zig) + "\0" + TARGETS[platform] + "\0").encode())
+    for x in [runtime_lib] + list(libs):
+        if os.path.isfile(x):
+            h.update(os.path.basename(x).encode() + b"\0")
+            _file_hash(h, x)
+        else:
+            h.update(x.encode() + b"\0")
+    return h.hexdigest()
 
 
 _ZIG_VERSIONS = {}

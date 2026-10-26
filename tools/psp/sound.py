@@ -41,6 +41,8 @@ doesn't know.
 import math
 import struct
 
+import native  # vag_decode, resample's filter and aica_encode in C when the library is there
+
 VAG_FILTERS = ((0, 0), (60, 0), (115, -52), (98, -55), (122, -60))
 AICA_SCALE = (230, 230, 230, 230, 307, 409, 512, 614)
 AICA_RATE = 44100
@@ -48,6 +50,8 @@ AICA_RATE = 44100
 
 def vag_decode(data):
     """Sony ADPCM frames to 16-bit samples (stops at a frame flagged as the end)"""
+    if native.LIB:
+        return native.vag_decode(data)
     out, s1, s2 = [], 0, 0
     for o in range(0, len(data) - 15, 16):
         head, flags = data[o], data[o + 1]
@@ -82,6 +86,8 @@ def aica_decode(data, count):
 def aica_encode(samples):
     """16-bit samples to AICA ADPCM (the runtime's and the chip's decoder):
     each nibble the one whose decoded value comes nearest"""
+    if native.LIB:
+        return native.aica_encode(samples)
     out = bytearray((len(samples) + 1) // 2)
     cur, step = 0, 127
     for n, x in enumerate(samples):
@@ -159,6 +165,8 @@ def resample(x, ratio, taps=8, phases=128):
             w = 0.5 + 0.5 * math.cos(math.pi * d / half)
             row.append(w * (cut * math.sin(math.pi * cut * d) / (math.pi * cut * d) if d else cut))
         table.append(row)
+    if native.LIB:
+        return native.resample(x, ratio, table, phases, half, int(len(x) * ratio))
     xp = [0] * half + list(x) + [0] * half
     out = []
     for j in range(int(len(x) * ratio)):
@@ -218,7 +226,8 @@ GAIN = 1 / 1.53
 
 def voice_bank(pphd, vag, sosb_template, smpb_template):
     """(SOSB, SMPB, [(rate, length)]) for a PSP character's voice bank"""
-    samples = [trimmed(rate, [int(round(v * GAIN)) for v in x], k == 0) for k, (rate, x) in enumerate(psp_bank(pphd, vag))]
+    level = (lambda x: native.scale(x, GAIN)) if native.LIB else (lambda x: [int(round(v * GAIN)) for v in x])
+    samples = [trimmed(rate, level(x), k == 0) for k, (rate, x) in enumerate(psp_bank(pphd, vag))]
     ratios, f = fit(samples)
     n = len(samples)
     rec0 = struct.unpack_from("<I", sosb_template, SOSB_HEAD)[0]

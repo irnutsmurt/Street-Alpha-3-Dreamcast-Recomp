@@ -18,7 +18,8 @@ new entries are converted is the table's kind:
   ptr       u32 pointers to records the Dreamcast table also points at: the
             PSP record -> the Dreamcast record the same characters use
   ptr_list  u32 pointers to lists of u16 ending in 0xFFFF: a list the
-            Dreamcast has is reused, a new one is copied into EXT
+            Dreamcast has is reused, a new one is copied into EXT (without
+            the entries the table's `drop` turns down)
   ptr_rank  u32 pointers into a block of records both programs have, the
             same records in the same order (characters may point at
             different ones on the PSP): a PSP record -> the Dreamcast's of
@@ -63,7 +64,14 @@ IMMEDIATES = [
     (0x8C06F8A4, "the same, its value"),
     (0x8C01C520, "World Tour: room for bank 0x1D's tiles (WORLD.PAC), malloc'd (0x30000; f_8C01C508)"),
     (0x8C01C600, "the same (f_8C01C5E8)"),
+    (0x8C05BDE4, "an effect's offset by character (8C0BBF14): Vega's entry with his mask (40)"),
+    (0x8C05BDE6, "the same, without it (41)"),
 ]
+# the add-on's values for some of them (the Dreamcast's stay without it)
+IMMEDIATE_VALUES = {
+    0x8C05BDE4: 42,  # Vega's entries come after the new characters' (38-41): 42 and 43, as on the PSP
+    0x8C05BDE6: 43,
+}
 
 
 # Instructions replaced (C statements in the recompiled code): the dialogue
@@ -76,6 +84,7 @@ REPLACE = [
      "shll r0 (row x 40) in the dialogue choice from 8C0A8490"),
     (0x8C028BDA, "g.r[0] = (uint32_t)((int32_t)g.r[0] / 20 * 44);",
      "shll r0 (row x 40) in the dialogue choice from 8C0A8508"),
+    (0x8C02C196, "g.r[4] += 44u;", "add #40 (row 1: the 10th fight) in the last fights' stage from 8C0A704C"),
 ]
 
 
@@ -86,6 +95,7 @@ def immediate(address):
             return EXT_IMM + 4 * k
     raise KeyError(hex(address))
 CHARS = 0x2A             # entries after the move: 0x00-0x29
+INTRO_VALUES = 14        # the intro pairings' values the Dreamcast has (8C0B2154, 8C0B2162)
 NEW = range(0x26, 0x2A)
 PSP_OFF = 0x74           # BOOT.BIN: file offset = address + 0x74
 MAIN = 0x8C010000
@@ -110,9 +120,9 @@ def name_index(family, c):
 class T:
     """a table: the Dreamcast's at dc (count entries of size bytes), the PSP's at
     psp; moved with room for `entries` entries, the PSP's entries `new` added"""
-    def __init__(self, dc, size, psp, kind="copy", count=38, note="", entries=CHARS, new=NEW):
+    def __init__(self, dc, size, psp, kind="copy", count=38, note="", entries=CHARS, new=NEW, drop=None):
         self.dc, self.size, self.psp, self.kind, self.count, self.note = dc, size, psp, kind, count, note
-        self.entries, self.new = entries, new
+        self.entries, self.new, self.drop = entries, new, drop
         self.ext = None
         # entries copied from the Dreamcast: at least 38 for a character table,
         # so one a short (the next object's first bytes read as the last
@@ -145,6 +155,19 @@ TABLES = [
     T(0x8C0B8DF4, 1, 0x21D3F4, note="f_8C049A86"),
     T(0x8C0B8E1A, 1, 0x21D41E, note="f_8C049D28"),
     T(0x8C0B9A74, 1, 0x21E0D0, note="f_8C056B4C"),
+    # an effect's place by its fighter's character, (x, y) from the fighter's (f_8C05BD9A); Vega's two
+    # (with and without his mask) after the characters, at 40 and 41 (IMMEDIATES), on the PSP at 42 and 43
+    T(0x8C0BBF14, 4, 0x2205E8, count=42, entries=44, new=list(NEW) + [42, 43],
+      note="an effect's offset from its fighter by character (f_8C05BD9A); Vega's after them"),
+    T(0x8C0BC17C, 4, 0x220840, note="an effect's offset (x, y) by its object's +0x42, a character (f_8C05C3D8)"),
+    T(0x8C0BC314, 1, 0x220A00, note="by an effect object's +0x42, a character (f_8C05C562)"),
+    # intro pairings (f_8C04E280): a list per character of (opponent, value) bytes ending FFFF; the
+    # value picks both fighters' intros (fighter +0x2E3: the list's owner's from 8C0B2154, the
+    # opponent's from 8C0B2162), each a routine of 8C0B1F94 (13 on the Dreamcast). The PSP's lists
+    # for the new characters use 3 values more (0x0E-0x10, intros only the PSP has: Yun with Bison
+    # and the dolls, Eagle with Bison): those pairs are left out
+    T(0x8C0B8F74, 4, 0x21D5A4, "ptr_list", note="intro pairings (f_8C04E280)",
+      drop=lambda pair: pair >> 8 >= INTRO_VALUES),
     T(0x8C0BA66C, 1, 0x21ED30, note="f_8C05A010 (sound)"),
     T(0x8C0BBD44, 2, 0x220408, count=37, note="f_8C05B05E; 37 entries (0x8C0BBD8E is the next object)"),
     T(0x8C0BC0BC, 4, 0x220798, note="f_8C05C01C; 2 u16"),
@@ -173,6 +196,11 @@ TABLES = [
     T(0x8C0A83D0, 1, 0x20B6A0, note="a flag per character"),
     T(0x8C0A83F8, 1, 0x20B6CA, note="a flag per character"),
     T(0x8C0A8420, 1, 0x20B604, note="the character's stage (f_8C02CA78; PSP 0x2D798); 0xFF: none"),
+    # the last two fights' stage by character (8C02C180: the 9th fight's row 0, the 10th's row 1,
+    # REPLACE), the next fight's stage (game state 2 +0x64) unless 0xFF. The 10th is Bison's (or a
+    # detour first, 8C0A8380: the dolls' fight, then Bison)
+    T(0x8C0A704C, 1, 0x20B341, note="the 9th fight's stage (8C02C198); 0xFF: the opponent's"),
+    T(0x8C0A7074, 1, 0x20B36B, note="the 10th fight's stage: row 1"),
     T(0x8C0CF7D4, 1, 0x234154, note="prologue: the portrait's first part in the OP file's bank 0x15 (f_8C07E584)"),
     T(0x8C0C1350, 1, 0x20A7AE, note="the boss again (f_8C06C02C & co.; the PSP's is the route's table)"),
     # --- the select screens (tools/psp/screens.py fills the new entries) ---
@@ -247,7 +275,7 @@ def layout():
 def check_rows():
     """the 2-D tables' rows lie ROW_STRIDE apart"""
     tables = {t.dc: t for t in layout()}
-    for first, rows in ((0x8C0A8490, 3), (0x8C0A8508, 2)):
+    for first, rows in ((0x8C0A8490, 3), (0x8C0A8508, 2), (0x8C0A704C, 2)):
         for r in range(1, rows):
             assert tables[first + 40 * r].ext == tables[first].ext + ROW_STRIDE * r, hex(first)
 
@@ -341,8 +369,10 @@ def patches(pr):
                     a = target
                     while True:
                         h = pr.p(a, 2)
-                        rec += h
                         a += 2
+                        if h != b"\xff\xff" and t.drop and t.drop(int.from_bytes(h, "little")):
+                            continue
+                        rec += h
                         if h == b"\xff\xff":
                             break
                     out.append((data, bytes(rec)))
@@ -353,6 +383,7 @@ def patches(pr):
             else:
                 raise ValueError(t.kind)
             out.append((t.ext + t.size * c, v))
+    out += [(immediate(a), struct.pack("<I", v)) for a, v in IMMEDIATE_VALUES.items()]
     assert data <= EXT_THROWS
     return out
 

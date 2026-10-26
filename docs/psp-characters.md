@@ -367,6 +367,45 @@ per character, where the cursor starts, e.g. after a continue; the PSP's
 `0x2230B7`; without it Yun's cursor started on Maki's cell). The versus
 select's twin (`8C0C2140`) was moved already.
 
+Added in 0.2.5 (Yun's crash before the final Bison fight; bad reads in his
+5th fight):
+
+- The last two fights' stages, `8C0A704C` (row 0, the 9th fight) and
+  `8C0A7074` (row 1, the 10th), 40 bytes a row: `8C02C180` reads
+  `[character]` for stage counter 8 and `[character + 40]` for 9 (the
+  `add #40` at `8C02C196`, made `+44` by `chartables.REPLACE`), into game
+  state 2 +0x64, the next fight's stage (`0xFF`: the opponent's). The PSP's
+  rows are `0x20B341` / `0x20B36B` (42 bytes); the new four fight both on
+  Bison's stage (`0x0A`). Unmoved, Yun's `[0x28 + 40]` read 2 bytes past
+  row 1: `0x2C`, no stage. Fight 10 for him is the dolls' detour (below),
+  which sets its own stage; fight 11, Bison's, kept `0x2C`, and
+  `f_8C0218EC` called entry `0x2C` of the stage handlers `8C0A0EF4`
+  (42 entries, one per stage: `8C19E424`, data): "call to unrecompiled
+  address 8C19E424 from 8C021900". My arcade tests had stopped after 10
+  fights, the dolls' one taken for Bison's.
+- Intro pairings, `8C0B8F74` (kind `ptr_list`, PSP `0x21D5A4`): a list per
+  character of (opponent, value) bytes ending `FFFF`; `f_8C04E280` finds
+  the opponent in the list of whichever fighter's +0x155 is 0 and sets
+  both fighters' intro (+0x2E3): the list owner's from `8C0B2154[value]`,
+  the other's from `8C0B2162[value]`, each an index into `8C0B1F94`, the
+  intro routines (13 on the Dreamcast). Unmoved, Yun's entry was `011D010D`
+  (the bytes after the table): the scan walked 0x40000 bytes of unmapped
+  memory (130,000 "mmio rd 0121xxxx" lines in the 5th fight's log). The PSP
+  adds values `0x0E`-`0x10` (its value tables `0x2155D0` / `0x2155E1` have
+  17 entries) for intros only it has (Yun with Bison and the dolls, Eagle
+  with Bison; its routine table 17 long): the add-on leaves those pairs out
+  (`T.drop`), keeping Eagle's (Sagat, Balrog, Guile), Maki's (Bison,
+  Sakura, Guy), Yun's (Fei-Long, Dee Jay) and Ingrid's (Rose, Bison, E.Ryu).
+- An effect's offset from its fighter by character, `8C0BBF14` ((x, y),
+  `f_8C05BD9A`): 42 entries, the characters', 2 spare, and Vega's with and
+  without his mask at 40 and 41 (`mov #40` / `mov #41` at `8C05BDE4` /
+  `8C05BDE6`), which were Yun's and Ingrid's numbers. The PSP has Vega's at
+  42 and 43: the add-on gives the new characters 38-41 and Vega 42-43, and
+  the two constants (`chartables.IMMEDIATES`, `IMMEDIATE_VALUES`) 42 and 43;
+  without the add-on they stay 40 and 41.
+- Two more by an effect object's +0x42 (a character): `8C0BC17C` ((x, y),
+  `f_8C05C3D8`, PSP `0x220840`) and `8C0BC314` (`f_8C05C562`, `0x220A00`).
+
 Two tables by object type are moved the same way (with no entries added:
 the characters register their handlers as a fight starts, `f_8C046D6E`).
 The new characters' types run past the Dreamcast's ends: written there, a
@@ -436,14 +475,24 @@ from the Dreamcast's; equal ones mean a table the PSP didn't extend:
 (build/test/flow_trace.sh): that a new character reads past a table's end
 doesn't matter to the comparison.
 
-Still to look at: `8C0B8F74` (intro pairings: lists of (character, value)
-ending `FFFF`; values index `8C0B2154`/`8C0B2162`, which the PSP extended
-too), `8C0BD570` (17-byte records), `8C0C111C` (32 entries: `f_8C06AD34`,
-`f_8C06ADE4`), `8C0C1AC8` (u16, right before `8C0C1B14`: `f_8C06DC3C`),
-`8C0D2354`, `8C0D5064`, `8C1D1608` (RAM), `8C0B1D44`, `8C0AD4E0` (16-byte
-records, the code's literals at +4, +0x10, +0x1C, +0x28), and the scan's
-other candidates (`8C0A8468`, `8C0AB238`, `8C0BBE8C`, `8C0BC314`,
-`8C0D3CA4`).
+A second scan in 0.2.5 (build/test/scan_rows.py) also takes 2- and
+4-byte entries and second rows 40 entries on (42 on the PSP), which is how
+`8C0A704C` hid from the first. Its other hits, checked in the code: not by
+character (by stage: `8C0BA6B4`, the stage music, 42 entries already; route
+patterns `8C0A6E3E`, `8C0A82E0`; level curves `8C0A8D3A`, `8C0B9448`; a
+random-pick list `8C0A6428` the PSP didn't lengthen; text and records), or
+still open: `8C0AC8BC` and its copy `8C0D46C0` (u16 by an object's +10 /
++0x3E, `f_8C03A1EA`, `f_8C08E0E6`; the PSP adds `0x33`-`0x36`, past the
+Dreamcast's largest `0x2E`, so whatever they index is longer on the PSP
+too), `8C0B252C` (u16 pairs `0x0Fnn` by an index from `8C0B23EC`,
+`f_8C04D12E`; the PSP's goes on with `0x0F60`-`0x0F62`), `8C0AB238` and
+`8C0BBE8C`.
+
+Still to look at: `8C0BD570` (17-byte records), `8C0C111C` (32 entries:
+`f_8C06AD34`, `f_8C06ADE4`), `8C0C1AC8` (u16, right before `8C0C1B14`:
+`f_8C06DC3C`), `8C0D2354`, `8C1D1608` (RAM), `8C0B1D44`, `8C0AD4E0`
+(16-byte records, the code's literals at +4, +0x10, +0x1C, +0x28),
+`8C0D3CA4`, and those above.
 
 Not by character: `8C0C19C8` (map positions, (x, y) by stage).
 
@@ -558,6 +607,18 @@ texture (`0x10000900`); the PSP's adds the win quotes (`0x10001`, text).
   attacker's descriptor (fighter +`0x180`, the fighter's own copy) a 42-entry
   copy when the opponent is a PSP character. Without it, Ken's CPU code read
   garbage (`512F51xx`) after a KO.
+- The last fights (`f_8C02C758`, after each win, by the stage counter at
+  game state 2 +20): the 9th and 10th fights' stages from `8C0A704C`
+  (above). After the 9th win, a character with an entry in `8C0A8380`
+  (`0x1E` Juli, or `0x15` Balrog; `0xFF` none) who hasn't fought that one
+  yet (`f_8C02C48C`: bit n of fighter +0x170, then +0x174 from 32: the
+  opponents beaten) takes a detour first: the dolls' fight (Juli and Juni,
+  Juli's stage) or Balrog's, and Bison comes 11th. The PSP gives Yun
+  `0x1E`, Eagle `0x15` (from `0x20B64C`), Maki and Ingrid none.
+- The fight's stage: game state 2 (`8C17FC60`) +0 is the stage
+  (`f_8C025F6E` copies it from +0x64 as a fight starts; the select screen
+  first writes the player's character there). `f_8C0218EC` calls the
+  stage's handler from `8C0A0EF4` (42, by stage; 0: none).
 
 ### Engine functions only the new characters call
 
@@ -763,8 +824,19 @@ FOLDER PSP-IMAGE`) takes the player's PSP image next to the Dreamcast disc.
    update rebuilds the add-on from it without the image). `BOOT.BIN`'s SHA-1
    names the release (`ULUS-10062`, `3fd0abf7...`).
 2. `align.write_maps` (7 s) writes `<data>/psp_maps.json`.
-3. `build_char.build` (about 4 minutes, the tile conversions) writes the C
-   and the files to `<data>/psp_out`; any problem fails the step.
+3. `build_char.build` (23 s; 4.8 s with its cache warm) writes the C and the
+   files to `<data>/psp_out`; any problem fails the step. The slow loops
+   (the sprite tiles' LZ decode, twiddle and smallest re-encode; the voices'
+   VAG decode, level, resampling and AICA encode) run in C,
+   `tools/sfa3conv.c` (`libsfa3conv.so` / `sfa3conv.dll`, built by
+   `sfa3port.py dev-libs`, in the app's `bin/`), loaded by `native.py`
+   through ctypes: the same bytes as the Python versions, which run without
+   it (or with `SFA3_NO_NATIVE=1`); in pure Python the step took 263 s.
+   The converters' results are cached (`cache.py`, `<data>/addon_cache`),
+   keyed by their code's fingerprint (`tools/stamps.py`: the module and
+   everything of ours it imports), the C library's version, the two discs'
+   main programs and the call's own inputs; entries a run didn't use are
+   dropped.
 4. The files (PAC/BIN) go to `<data>/addon`, named in `files.txt`; the C
    (`psp_*.c`) is added to the generated sources (the Zig build; CMake finds
    `build/psp_out` itself), and `psp_none.c` (in the runtime library) isn't
@@ -778,8 +850,15 @@ with a message: its code can't run on the Dreamcast's files (the HUD, the
 select screens). Netplay's build id mixes in the add-on's data, so a game
 with it only meets one with the same add-on.
 
-A full install with the add-on takes about 9 minutes (12 threads), an update
-4.5 (the add-on is converted again each time).
+An update does only what changed (`pipeline.py`; `install.json` keeps a
+fingerprint per step, `"stamps"`): the add-on step runs only when its code
+or the PSP image changed (or the game's code has to be compiled again), and
+then in a second process while the game code recompiles. On a Ryzen 5 5500U
+(12 threads): nothing changed 0.3 s; a new runtime library (a runtime fix)
+3 s, relinking; the first update from a version without fingerprints, or a
+change to the character tables, about 1.5 minutes (25 of 339 files
+compiled); a full build (`Rebuild everything`, or a first install) about 6
+minutes, mostly compiling the game's 339 files.
 
 ### The ranking
 
@@ -1022,6 +1101,9 @@ her effect objects add small offsets to her base (`p_1C7974`).
 
 - The PSP's stages and music.
 - The rest of the character tables (Character tables, above).
+- The PSP-only intros (Yun with Bison and the dolls, Eagle with Bison:
+  intro pairings values `0x0E`-`0x10`, routines 13-16 of the PSP's intro
+  table); the new characters play the general ones there.
 - A ranking entry or saved data naming a PSP character would read past the
   Dreamcast's tables without the add-on.
 
@@ -1055,6 +1137,11 @@ her effect objects add small offsets to her base (`p_1C7974`).
 | control `mark <file>` | create the file: the commands queued before it are done |
 | `SFA3_CTL_LOG=1` | log each control command with its frame (the queue holds 512) |
 | `SFA3_FORCE_HEALTH=<fighter>:<value>` | keep fighter 0/1's health at most value (1: a hit wins the round) |
+| control `health <fighter\|-1> <value>` | the same, changed while running (-1: off) |
+| control `refill <fighter\|-1>` | keep a fighter at full health (-1: off) |
+| `SFA3_CHEAT_CPU_KO=1`, `SFA3_CHEAT_HEALTH=1` | the CHEATS menu's One hit KO (every CPU fighter: the dolls' fight too) and Infinite health, without touching `sfa3.cfg` (settings from the environment aren't saved) |
+| `SFA3_NO_NATIVE=1` | the add-on's conversions in Python, not the C library (`native.py`) |
+| `SFA3_ADDON_CACHE=<dir>` | `build_char.py` run by itself caches its converters' results there (`cache.py`), as the setup does |
 | `SFA3_POKE_EVERY=<hex address>:<value>,...` | write guest bytes every frame (up to 8) |
 | `SFA3_MMIO_BT=<hex address>` | the host call stack of the first access to that 16 MB area |
 | `SFA3_SPRITE_FIND=<hex part>` | the first 20 draws of that sprite part, any bank |
@@ -1098,7 +1185,19 @@ the keyon log against the character's converted voice bank. Select moves from th
 `right right down down down`, Maki `right` x4 `down down down`.
 `vswin.sh <hex char> <name>` (Versus, two KOs, the win screen),
 `cpu_vs.sh <opponent> <seconds> <name>` (arcade as Ryu against a poked first
-opponent: the CPU playing a character). `hangbt.sh [out]` waits until the
+opponent: the CPU playing a character). `arc_dlg.sh <name> <moves> <fights>`
+(arcade fight after fight with shots through each lead-in; 11 fights for
+Yun: the dolls' detour, then Bison and the ending, with `EXTRA="SFA3_CHEAT_CPU_KO=1
+SFA3_CHEAT_HEALTH=1"`: the dolls are two CPU fighters), `yun_final.sh`
+(the last fight in full, `health`/`refill`). `scan_rows.py` (literals into
+data that look like character tables not moved: 1-, 2- and 4-byte entries,
+second rows), `show_use.py <addr>...` (the recompiled code around a
+literal's uses). The setup: `time_update.py [first|second|full]` (an update
+of `install_pkg` with each step's time), `cmp_native.sh` (the add-on in
+Python and in C, compared), `cache_check.sh` (cold and warm with the
+cache), `native_win.py` (the C library's output hashed: run with Linux
+Python and Wine's Windows Python), `winlink.py` (the game cross-built and
+linked for Windows in `wincheck/`). `hangbt.sh [out]` waits until the
 test game stops rendering for 6 seconds and writes gdb's backtraces (the
 recompiled functions by name); gdb can also stop on a guest condition, e.g.
 `break f_8C01421E if (*(unsigned*)((char*)&g + 16) & 0xF00) == 0x400`

@@ -88,6 +88,8 @@ SDL_Window *g_window;
 /* sfa3.cfg: "key = value" lines; settings are exported as SFA3_<KEY>
  * environment variables (already-set environment variables win). */
 static uint64_t s_frames;
+/* testing: SFA3_FORCE_HEALTH's fighter (-2: not read yet) and cap; a fighter kept at full health (-1: none) */
+int g_force_health_player = -2, g_force_health_value = 1, g_refill_player = -1;
 
 /* Sync testing (deterministic mode): SFA3_HASH_LOG=<file> writes a hash of the
  * whole guest state at every vblank, so two runs can be compared frame by frame. */
@@ -283,15 +285,20 @@ void video_vblank(void) {
         }
         for (int i = 0; i < n; i++) W8(addr[i], val[i]);
     }
-    {  /* SFA3_FORCE_HEALTH=<player>:<value>: keep a fighter's health at most that (testing: a hit wins a round) */
-        static int player = -2, value;
-        if (player == -2) {
+    {  /* SFA3_FORCE_HEALTH=<player>:<value>: keep a fighter's health at most that (testing: a hit wins a round);
+          the control file's "health" / "refill" change it while running */
+        if (g_force_health_player == -2) {
             const char *e = getenv("SFA3_FORCE_HEALTH");
-            player = e ? atoi(e) : -1;
-            value = e && strchr(e, ':') ? atoi(strchr(e, ':') + 1) : 1;
+            g_force_health_player = e ? atoi(e) : -1;
+            g_force_health_value = e && strchr(e, ':') ? atoi(strchr(e, ':') + 1) : 1;
         }
+        int player = g_force_health_player, value = g_force_health_value;
         uint32_t health = 0x8C17FD38u + 0x44Cu * (uint32_t)player + 0x60u;
         if (player >= 0 && player < 4 && (int16_t)R16(health) > value) W16(health, (uint32_t)value);
+        if (g_refill_player >= 0 && g_refill_player < 4) {  /* kept at its full health (+0x62) */
+            uint32_t f = 0x8C17FD38u + 0x44Cu * (uint32_t)g_refill_player;
+            if ((int16_t)R16(f + 0x60) >= 0 && R16(f + 0x60) < R16(f + 0x62)) W16(f + 0x60, R16(f + 0x62));
+        }
     }
     menu_tag(cheats_active() ? "CHEATS ON" : "");
     if (s_frames % 60 == 0) {

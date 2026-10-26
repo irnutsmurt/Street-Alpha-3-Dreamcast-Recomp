@@ -46,7 +46,9 @@ def cli_progress():
 def cmd_setup(args):
     try:
         out = pipeline.run(args.image, force=args.force, toolchain=args.toolchain, progress=cli_progress(),
-                           log=lambda m: None, psp_image=args.psp)
+                           log=lambda m: None, psp_image=args.psp,
+                           skip=lambda st: print(f"\n[{pipeline.STEPS.index(st) + 1}/{len(pipeline.STEPS)}] "
+                                                 f"{pipeline.STEP_NAMES[st]}: unchanged", end=""))
     except pipeline.SetupError as e:
         print()
         sys.exit(f"setup failed: {e}")
@@ -106,7 +108,7 @@ def vulkan_headers():
 def cmd_dev_libs(args):
     """The prebuilt parts players get, built with Zig for each platform (zig_build.TARGETS):
     build/lib/<platform>/: libsfa3rt.a, SDL3 (libSDL3.so.0 | SDL3.dll + libSDL3.dll.a),
-    link/ (what the game links for Vulkan); build/tools/<platform>/chd2gdi"""
+    link/ (what the game links for Vulkan); build/tools/<platform>/: chd2gdi, the add-on's C library"""
     zig = zig_build.find_zig()
     if not zig:
         sys.exit("zig not found (build/toolchain/zig-*/zig or on PATH)")
@@ -145,9 +147,23 @@ def cmd_dev_libs(args):
                                os.path.join(ROOT, "tools", "chd2gdi.c"), os.path.join(L, "unity.c"),
                                os.path.join(L, "src", "libchdr_codec_avhuff.c"), *res, "-o", helper, "-lm", "-w", "-s"])
         print(helper)
+        # the PSP characters add-on's conversions in C (tools/psp/native.py loads it)
+        conv = os.path.join(BUILD, "tools", plat, CONV_LIB[plat])
+        subprocess.check_call([zig, "cc", *zig_build.target(plat), "-O2", "-std=gnu11", "-shared", "-fvisibility=hidden",
+                               *zig_build.SHIP_FLAGS, *([] if plat == "windows" else ["-fPIC"]),
+                               os.path.join(ROOT, "tools", "sfa3conv.c"), "-o", conv, "-s"])
+        for leftover in (conv[:-4] + ".lib", conv[:-4] + ".pdb"):  # Windows: an import library nobody needs
+            if plat == "windows" and os.path.exists(leftover):
+                os.remove(leftover)
+        print(conv)
+
+
+CONV_LIB = {"linux": "libsfa3conv.so", "windows": "sfa3conv.dll"}
 
 
 def main():
+    import multiprocessing
+    multiprocessing.freeze_support()
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("setup", help="extract, verify, recompile and build from your disc image")

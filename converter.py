@@ -225,6 +225,11 @@ class App:
         self.desktop = tk.BooleanVar(value=True)
         ttk.Checkbutton(form, text="Create a desktop shortcut", variable=self.desktop).grid(
             row=5, column=1, sticky="w", padx=6, pady=(6, 0))
+        # an update does only what changed (pipeline.py); this does it all again
+        self.full = tk.BooleanVar(value=False)
+        self.full_box = ttk.Checkbutton(form, text="Rebuild everything (slower: only if an update misbehaves)",
+                                        variable=self.full)
+        self.full_box.grid(row=6, column=1, sticky="w", padx=6, pady=(2, 0))
 
         steps = ttk.LabelFrame(root, text="Progress")
         steps.pack(fill="x", **pad)
@@ -314,6 +319,11 @@ class App:
             b.config(state="normal" if installed else "disabled")
         can_update = self.is_update()
         self.convert_btn.config(text="Update" if can_update else "Convert")
+        if can_update:
+            self.full_box.grid()
+        else:
+            self.full_box.grid_remove()
+            self.full.set(False)
         self.show_skipped()
         if not installed:
             self.status.config(text="Ready.")
@@ -339,7 +349,8 @@ class App:
             return
         self.skipped = set() if self.addon_wanted() else {"addon"}
         for s in pipeline.STEPS:
-            self.step_labels[s].config(style="Skip.TLabel" if s in self.skipped else "TLabel")
+            self.step_labels[s].config(text=pipeline.STEP_NAMES[s],
+                                       style="Skip.TLabel" if s in self.skipped else "TLabel")
 
     def is_update(self):
         """An install to bring up to date: no image chosen, or the one it was made from."""
@@ -395,13 +406,14 @@ class App:
         save_settings(image=os.path.abspath(image) if image else None, install=os.path.abspath(install),
                       psp_image=os.path.abspath(psp) if psp else None)
         self.worker = threading.Thread(target=self.work, args=(None if update else image, install, self.desktop.get(),
-                                                               psp or None), daemon=True)
+                                                               psp or None, update and self.full.get()), daemon=True)
         self.worker.start()
 
-    def work(self, image, install, desktop, psp_image=None):
+    def work(self, image, install, desktop, psp_image=None, full=False):
         try:
             out = pipeline.run(image, progress=lambda st, f, m: self.events.put(("progress", st, f, m)),
                                log=lambda m: self.events.put(("log", m)),
+                               skip=lambda st: self.events.put(("skip", st)), full=full,
                                paths=pipeline.Paths(install=install), toolchain="zig", psp_image=psp_image)
             if image is not None:  # an update keeps the shortcuts as the player left them
                 try:
@@ -424,7 +436,7 @@ class App:
                     i = pipeline.STEPS.index(st)
                     if st in self.skipped:  # it runs after all (an install keeping the PSP characters' files)
                         self.skipped.discard(st)
-                        self.step_labels[st].config(style="TLabel")
+                        self.step_labels[st].config(text=pipeline.STEP_NAMES[st], style="TLabel")
                     for s in pipeline.STEPS[:i]:
                         if s not in self.skipped:
                             self.marks[s].config(text="✔", style="Ok.TLabel")
@@ -436,6 +448,11 @@ class App:
                     self.status.config(text=msg + (f"  {int(frac * 100)}%" if 0 < frac < 1 else ""))
                 elif ev[0] == "log":
                     self.add_log(ev[1])
+                elif ev[0] == "skip":  # nothing changed for this step since the last build: its work reused
+                    st = ev[1]
+                    self.skipped.add(st)
+                    self.marks[st].config(text="–", style="TLabel")
+                    self.step_labels[st].config(text=pipeline.STEP_NAMES[st] + " (unchanged)", style="Faint.TLabel")
                 elif ev[0] == "done":
                     self.spinner.hide()
                     self.current = None
@@ -569,26 +586,31 @@ class App:
             subprocess.Popen(["xdg-open", folder])
 
 
-def convert_headless(image, install, psp_image=None):
+def convert_headless(image, install, psp_image=None, full=False):
     """SFA3-Setup --convert IMAGE FOLDER [PSP-IMAGE]: the same conversion without the window.
-    SFA3-Setup --update FOLDER: update an install (image None)."""
+    SFA3-Setup --update FOLDER [--full]: update an install (image None); --full: everything again."""
     def show(step, frac, msg):
         print(f"\r[{pipeline.STEPS.index(step) + 1}/{len(pipeline.STEPS)}] {msg} {int(frac * 100)}%   ",
               end="", flush=True)
+
+    def skipped(step):
+        print(f"\r[{pipeline.STEPS.index(step) + 1}/{len(pipeline.STEPS)}] {pipeline.STEP_NAMES[step]}: unchanged")
     try:
         out = pipeline.run(image, progress=show, log=lambda m: None, paths=pipeline.Paths(install=install),
-                           toolchain="zig", psp_image=psp_image)
+                           toolchain="zig", psp_image=psp_image, skip=skipped, full=full)
     except pipeline.SetupError as e:
         sys.exit(f"\nfailed: {e}")
     print(f"\ndone: {out}")
 
 
 def main():
+    import multiprocessing
+    multiprocessing.freeze_support()  # the packaged app started as the setup's second process (pipeline.AddonProcess)
     if len(sys.argv) in (4, 5) and sys.argv[1] == "--convert":
         return convert_headless(os.path.abspath(sys.argv[2]), os.path.abspath(sys.argv[3]),
                                 os.path.abspath(sys.argv[4]) if len(sys.argv) == 5 else None)
-    if len(sys.argv) == 3 and sys.argv[1] == "--update":
-        return convert_headless(None, os.path.abspath(sys.argv[2]))
+    if len(sys.argv) in (3, 4) and sys.argv[1] == "--update":
+        return convert_headless(None, os.path.abspath(sys.argv[2]), full=sys.argv[3:] == ["--full"])
     after = None
     if len(sys.argv) == 4 and sys.argv[1] == "--after-update":  # started by the previous version
         after = {"old": sys.argv[2], "install": sys.argv[3]}

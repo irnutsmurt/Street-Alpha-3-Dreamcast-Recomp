@@ -850,10 +850,13 @@ def build(boot_path, psp_data, dc_dir, out_dir, maps, spec="26=26,27=27,28=28,29
     Returns the problems (code and data with no counterpart)."""
     b = Build(boot_path, psp_data, maps)
     os.makedirs(out_dir, exist_ok=True)
+    # the converters' results come from the add-on's cache when their code and the discs are the
+    # same as last time (cache.py; the setup turns it on)
+    import cache
     import screens  # first: its record groups in the extension RAM are the counterparts of PSP data
-    sel, sel_patches, screen_info = screens.build(
+    sel, sel_patches, screen_info = cache.value("screens", ["screens"], [], lambda: screens.build(
         open(os.path.join(dc_dir, "SELECT.PAC"), "rb").read(), open(os.path.join(psp_data, "select_u.pac"), "rb").read(),
-        open(os.path.join(dc_dir, "1ST_READ.BIN"), "rb").read(), b.boot.data)
+        open(os.path.join(dc_dir, "1ST_READ.BIN"), "rb").read(), b.boot.data))
     open(os.path.join(out_dir, "SELECT.PAC"), "wb").write(sel)
     for lo, hi, dc in screen_info["psp_groups"]:
         b.map_data(lo, hi, dc)
@@ -886,30 +889,32 @@ def build(boot_path, psp_data, dc_dir, out_dir, maps, spec="26=26,27=27,28=28,29
         chartables.EXT_RANKING
     print(f"select screen: SELECT.PAC {len(sel)} bytes, {len(sel_patches)} patches")
     import ranking
-    rk_files, rk_patches, end = ranking.build(dc_dir, psp_data, b.boot.data, chartables.EXT_RANKING)
+    rk_files, rk_patches, end = cache.value("ranking", ["ranking"], [chartables.EXT_RANKING], lambda: ranking.build(
+        dc_dir, psp_data, b.boot.data, chartables.EXT_RANKING))
     assert end <= chartables.EXT_END
     for name, data in rk_files.items():
         open(os.path.join(out_dir, name), "wb").write(data)
     patches += rk_patches
     print(f"ranking: {' '.join(sorted(rk_files))} ({len(rk_patches)} patches)")
     import menus
-    msel, menu_patches = menus.build(open(os.path.join(dc_dir, "MSEL.PAC"), "rb").read(),
-                                     open(os.path.join(psp_data, "msel_u.pac"), "rb").read(), b.boot.data)
+    msel, menu_patches = cache.value("menus", ["menus"], [], lambda: menus.build(
+        open(os.path.join(dc_dir, "MSEL.PAC"), "rb").read(), open(os.path.join(psp_data, "msel_u.pac"), "rb").read(),
+        b.boot.data))
     open(os.path.join(out_dir, "MSEL.PAC"), "wb").write(msel)
     patches += menu_patches
     print(f"menus: MSEL.PAC {len(msel)} bytes (the ranking's faces)")
     import hud
-    pitu, hud_patches, hud_parts = hud.build(
+    pitu, hud_patches, hud_parts = cache.value("hud", ["hud"], [], lambda: hud.build(
         open(os.path.join(dc_dir, "PITU.PAC"), "rb").read(), open(os.path.join(psp_data, "pit_u.pac"), "rb").read(),
-        open(os.path.join(dc_dir, "1ST_READ.BIN"), "rb").read(), b.boot.data)
+        open(os.path.join(dc_dir, "1ST_READ.BIN"), "rb").read(), b.boot.data))
     open(os.path.join(out_dir, "PITU.PAC"), "wb").write(pitu)
     patches += hud_patches
     screen_info["hud_parts"] = [hud_parts[c] for c in sorted(hud_parts)]
     print(f"fight HUD: PITU.PAC {len(pitu)} bytes")
     import worldtour
-    world, world_patches = worldtour.build(
+    world, world_patches = cache.value("worldtour", ["worldtour"], [], lambda: worldtour.build(
         open(os.path.join(dc_dir, "WORLD.PAC"), "rb").read(), open(os.path.join(psp_data, "world_u.pac"), "rb").read(),
-        b.boot.data)
+        b.boot.data))
     open(os.path.join(out_dir, "WORLD.PAC"), "wb").write(world)
     patches += world_patches
     print(f"World Tour: WORLD.PAC {len(world)} bytes")
@@ -918,11 +923,14 @@ def build(boot_path, psp_data, dc_dir, out_dir, maps, spec="26=26,27=27,28=28,29
         print(f"{name}: {size} bytes")
     patches += bd_parts(dc_dir, out_dir, [cid for cid, _ in pairs])
     import ending
-    for name, size, template in ending.build(b.boot, psp_data, dc_dir, out_dir, [cid for cid, _ in pairs]):
+    chars = [cid for cid, _ in pairs]
+    for name, size, template in cache.files("ending", ["ending"], [chars], out_dir,
+                                            lambda d: ending.build(b.boot, psp_data, dc_dir, d, chars)):
         print(f"{name}: {size} bytes (the ending code of {template})")
     patches += chartables.file_patches([k.lower() for k in files.KINDS] + ["end", "rk"])
     import throws
-    throw_patches, end = throws.patches(dc_dir, psp_data, chartables.EXT_THROWS)
+    throw_patches, end = cache.value("throws", ["throws"], [chartables.EXT_THROWS], lambda: throws.patches(
+        dc_dir, psp_data, chartables.EXT_THROWS))
     assert end <= chartables.EXT_NAMES
     patches += throw_patches
     print(f"throws: {len(throw_patches) - 1} lists for the PSP characters as opponents")
@@ -939,7 +947,13 @@ def build(boot_path, psp_data, dc_dir, out_dir, maps, spec="26=26,27=27,28=28,29
 
 
 def main():
+    if os.environ.get("SFA3_ADDON_CACHE"):  # developers: the setup's cache (cache.py) in that folder
+        import cache
+        boot, dc_dir = sys.argv[1], sys.argv[3]
+        cache.configure(os.environ["SFA3_ADDON_CACHE"], cache.inputs(os.path.join(dc_dir, "1ST_READ.BIN"), boot))
     build(*sys.argv[1:7])
+    if os.environ.get("SFA3_ADDON_CACHE"):
+        cache.finish()
 
 
 if __name__ == "__main__":
