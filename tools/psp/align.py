@@ -39,6 +39,15 @@ class Psp:
     def __init__(self, path):
         self.data = open(path, "rb").read()
         self.text_end = 0x1F8354
+        # instructions building segment 1 addresses (mipsgen.Boot.canon: the low ones moved to 0x1000000+)
+        self.seg1 = set()
+        for k in range(0, 0x7B9F0, 8):
+            o, info = struct.unpack_from("<II", self.data, 0x2D5C18 + k)
+            if (info >> 16) & 0xFF == 1:
+                self.seg1.add(o)
+
+    def canon(self, v, a):
+        return v + 0x1000000 if a in self.seg1 and v < 0x2D4FC0 else v
 
     def u32(self, a):
         return struct.unpack_from("<I", self.data, a + PSP_OFF)[0]
@@ -83,7 +92,7 @@ class Psp:
                 continue
             if n in ("addiu", "addi"):
                 if i.rs in known:
-                    known[i.rt] = (known[i.rs] + i.imm) & 0xFFFFFFFF
+                    known[i.rt] = self.canon((known[i.rs] + i.imm) & 0xFFFFFFFF, a)
                 else:
                     known.pop(i.rt, None)
                     if i.rs != 29:  # pointer + constant
@@ -95,7 +104,7 @@ class Psp:
                 continue
             if n == "ori":
                 if i.rs in known:
-                    known[i.rt] = known[i.rs] | i.imm
+                    known[i.rt] = self.canon(known[i.rs] | i.imm, a)
                 else:
                     known.pop(i.rt, None)
                 continue
@@ -128,7 +137,7 @@ class Psp:
                 size = {"b": 1, "h": 2, "w": 4}.get(n[1], 4) if n[0] in "ls" and n not in ("lwc1", "swc1") else 4
                 kind = "S" if n[0] == "s" else "L"
                 if i.rs in known:
-                    out.append(("G", (known[i.rs] + i.imm) & 0xFFFFFFFF, kind, size))
+                    out.append(("G", self.canon((known[i.rs] + i.imm) & 0xFFFFFFFF, a), kind, size))
                 elif i.rs in tables:
                     out.append(("G", (tables[i.rs] + i.imm) & 0xFFFFFFFF, kind, size))
                 elif i.rs != 29:
@@ -341,6 +350,7 @@ def dc_descriptor(dc):
 # ---------------- alignment ----------------
 
 PSP_DATA, PSP_DATA_END = 0x1FEDE0, 0x1FEDE0 + 0xD6138
+PSP_BSS = 0x2D4FC0
 
 
 def walk_tables(dc, psp, dw, pw, limit=4096):
@@ -516,6 +526,55 @@ def align(dc_dir, boot):
     return m.offs, m.globs, m.calls, len(m.done)
 
 
+# the ending engine (tools/psp/ending.py): the PSP's object handlers for ending types 72-80 and the
+# Dreamcast's (END06.BIN's code, the add-on's endings' template), as each setup installs them
+DC_ENDING_HANDLERS = (0x8C801814, 0x8C80195C, 0x8C8029E0, 0x8C802BF4, 0x8C807050, 0x8C807118, 0x8C802AC6,
+                      0x8C807368, 0x8C8087E0)
+PSP_ENDING_HANDLERS = (0x1C901C, 0x1C9248, 0x1CB124, 0x1CB574, 0x1D548C, 0x1D5594, 0x1CB384, 0x1D5994, 0x1D81A8)
+ENDING_TEMPLATE = "END06.BIN"
+PSP_ENDING_CODE = (0x1C1DF8, 0x1DC800)  # Ingrid's module and the ending engine after it (they share code)
+
+
+def align_ending(dc_dir, boot):
+    """the ending engines lined up from their handlers: (globals votes, calls votes, the template's
+    variables' start). The template's own variables (after its directory) count as globals."""
+    psp = Psp(boot)
+    m = Matcher(psp)
+    main = DcMain(os.path.join(dc_dir, "1ST_READ.BIN"))
+    dc = Dc(os.path.join(dc_dir, ENDING_TEMPLATE))
+    vars_from = struct.unpack_from("<I", dc.data, 0x328)[0] + 13 * 4  # the directory's literal, then its 13 words
+
+    def dc_events(a):
+        return dc.events(a) if dc.img.contains(a) else main.events(a)
+
+    def dc_u32(a):
+        img = dc.img if dc.img.contains(a) else main.img if main.img.contains(a) else None
+        return img.u32(a) if img and img.contains(a + 3) else None
+    m.dc_u32 = dc_u32
+    todo = list(zip(DC_ENDING_HANDLERS, PSP_ENDING_HANDLERS))
+    while todo:
+        d, p = todo.pop()
+        if not dc.img.contains(d):
+            continue
+        for x, y in m.pair(d, p, dc_events):
+            if dc.img.contains(x):
+                if x in dc.funcs:
+                    todo.append((x, y))
+            elif main.img.contains(x):
+                m.calls[(x, y)] += 1
+    return m.globs, m.calls, vars_from, len(m.done)
+
+
+def ending_globals(globs, vars_from):
+    """PSP variables (.bss) the ending engine uses -> the Dreamcast's: the main program's or the
+    template's own (not tables: the PSP's code keeps its own)"""
+    gb = collections.defaultdict(collections.Counter)
+    for (d, p), v in globs.items():
+        if p >= PSP_BSS and (0x8C010000 <= d < OVERLAY_BASE or vars_from <= d < OVERLAY_BASE + 0x12000):
+            gb[p][d] += v
+    return sorted((p, c.most_common(1)[0][0]) for p, c in gb.items() if c.most_common(1)[0][1] >= 2)
+
+
 def best(counter):
     """for each source key, its most-voted target, with votes and how many disagreed"""
     by = collections.defaultdict(collections.Counter)
@@ -528,9 +587,10 @@ def best(counter):
     return out
 
 
-def export_maps(globs, calls):
+def export_maps(globs, calls, ending=()):
     """PSP -> Dreamcast: each PSP function's most-voted counterpart, and the
-    globals as segments of addresses that share one offset"""
+    globals as segments of addresses that share one offset (ending: the
+    ending engine's variables, ending_globals())"""
     by = collections.defaultdict(collections.Counter)
     for (d, p), v in calls.items():
         if 0x8C010000 <= d < 0x8C800000:
@@ -548,6 +608,8 @@ def export_maps(globs, calls):
                 and not 0x2C7F00 <= p < 0x2C8500:
             gb[p][d] += v
     pts = sorted((p, c.most_common(1)[0][0]) for p, c in gb.items() if c.most_common(1)[0][1] >= 2)
+    have = {p for p, _ in pts}
+    pts = sorted(pts + [(p, d) for p, d in ending if p not in have])
     segs = []
     for p, d in pts:
         if segs and d - p == segs[-1][2] - segs[-1][0] and p - segs[-1][1] <= 0x40:
@@ -561,8 +623,14 @@ def main():
     dc_dir, boot = sys.argv[1], sys.argv[2]
     if len(sys.argv) > 4 and sys.argv[3] == "--maps":
         offs, globs, calls, n = align(dc_dir, boot)
-        json.dump(export_maps(globs, calls), open(sys.argv[4], "w"), indent=0)
-        print("function pairs aligned:", n)
+        egl, ecalls, vars_from, en = align_ending(dc_dir, boot)
+        for (d, p), v in ecalls.items():
+            # the engine's functions the ending engine calls; not its own (recompiled: where the
+            # Dreamcast's inlined a helper, the PSP's call lines up with some other call)
+            if not PSP_ENDING_CODE[0] <= p < PSP_ENDING_CODE[1]:
+                calls[(d, p)] += v
+        json.dump(export_maps(globs, calls, ending_globals(egl, vars_from)), open(sys.argv[4], "w"), indent=0)
+        print("function pairs aligned:", n, "; the ending engines':", en)
         return
     offs, globs, calls, n = align(dc_dir, boot)
     print("function pairs aligned:", n)

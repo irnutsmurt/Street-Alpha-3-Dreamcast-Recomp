@@ -33,7 +33,9 @@ Status (2026-10-25):
   and VS Dramatic use the same screen.
 - World Tour: picking one goes through the map, the VS screen and the fight
   (World Tour, below). Checked with Yun to the first fight.
-- Not yet: endings, the ranking's portraits, the PSP-only command checker Yun
+- Endings: each new character's plays to the end (Endings, below; the
+  four checked with M.Bison as the last opponent).
+- Not yet: the ranking's portraits, the PSP-only command checker Yun
   uses for command 0x20 (recompiled, but its button-configuration state is
   PSP-only and starts zeroed), Ingrid's background-scroll variables
   (PSP-only).
@@ -615,6 +617,83 @@ to 4 KB), so the two loaders' allocation sizes (`mov.l` literals at
 select screen, above). The add-on installs its `WORLD.PAC` in place of the
 disc's (`build/psp_out/WORLD.PAC`).
 
+### Endings
+
+The arcade ending (dreamcast.md, Arcade endings) is an overlay, `ENDnn.BIN`,
+and an archive, `ENDnn.PAC`. The PSP has no overlays: its ending engine is
+in `BOOT.BIN` (`0x1C901C`-`0x1DC800`; its setup `0x1DB21C`, the per-frame
+loop `0x1DA14C`, its steps at `0x2B3680`), its per-character directories
+at `0x2B34B0` (6 words: the Dreamcast's 1, 6, 7, 8, 9 and 11) with the
+data they point to, and the rest in `endNN_u.pac` (sections `0x20000`-
+`0x20005`, `0x10003` the text, `0x4000019` the palettes, bank `0x19`, the
+textures from `0xC17`); `endcom.pac` (file 8) the shared section 0 and
+textures `0xC00`-`0xC16`. Its loader (`0x12550`) is `f_8C01BA82`'s.
+
+`ending.py` builds `END26`-`END29`: the code, variables and routines of a
+Dreamcast ending (`END06`, the one with most room), its directory where
+`END06`'s is, and between them the character's data: the PSP directory's
+blocks (deep-copied by the relocations, palettes' colours swapped), the
+sections (the index tables `0x20003`/`0x20004` turned into the pointer
+tables), the text records (the 128-byte blocks cut after their one or two
+lines). The archive: `END00.PAC`'s shared sections, the PSP's own (textures
+twiddled and their colours swapped, bank `0x19`'s tiles twiddled). Its
+`check` rebuilds the Dreamcast's own endings from the PSP's data and
+compares: they match but for the sprite numbers and a few bytes.
+
+The PSP's engine differs from the Dreamcast's in its objects:
+
+- people (actor type 75 and others) are drawn with the fighters' own
+  sprites: every animation from the 10-byte records (`0x1D4C40`,
+  `0x1D80A8`, `0x1D9448`) takes the bank of the fighter whose character the
+  actor is, or for one neither fighter is (a cameo: Guile in Eagle's ending,
+  Guy in Maki's, whose poses are at the end of the player's own file) the
+  fighter's that isn't M.Bison; the records' pose numbers are the fighters'
+  own (the Dreamcast's endings have copies in bank `0x19` instead);
+- effects draw from bank 5 (`EFCT.PAC`; type 77, type 80's sub-types 2,
+  11, 19...);
+- types 73, 77 and 79 have more sub-types (73: 49 to the Dreamcast's 43);
+  Maki's and Ingrid's endings use them;
+- Ingrid's actors get her effects (`0x1D513C`, `0x1C8EC0`).
+
+So the PSP's object handlers run for these endings: the build recompiles
+the handlers of types 72-80 (`ENDING_HANDLERS`, as `0x1DB21C` installs
+them) and what they reach (about 600 functions: they share code and tables
+with Ingrid's module), with their stubs and PSP data at `98F00000` in the
+extension RAM (the character files aren't loaded during an ending), and
+`hle_ending_setup` (on `f_8C0218B6`, which the setup calls once its own
+handlers are in) puts them in the effect objects' table. Objects the
+ending makes whose handlers a character file registers during a fight
+(not loaded then) get theirs too (`ENDING_OBJECTS`): Ingrid's effect
+(`0x1C8EC0` makes a type 58 in pool D, handler `0x1C8F08`). The Dreamcast's
+code runs the rest (the scenes, the script, the text, the textures). Both
+engines' state is the same (PSP `0x87FCB0`, Dreamcast `8C1A31D4`: a manual
+map); `align.py` lines the two engines up from their handlers too (its
+votes for the PSP variables they use; not for the ending engine's own
+functions, recompiled: where the Dreamcast's inlined a helper the PSP's
+call lines up with another). The three engine functions the handlers call
+with no map yet are in `manual_maps.json` (`0x1DA64` = `8C024AD4`,
+`0x1DAA8` = `8C024B1A`, `0x66CC` = `8C01532A`). An ending the add-on built
+marks itself (directory word 12 -> "PSPE" and the 10-byte records' range):
+`hle_ending_anim` (on `f_8C024AD4`) applies the fighters' banks when the
+Dreamcast's code starts such an animation, and `ending_draw` (in the sprite
+hook) makes an object with a fighter's bank draw the fighters' way.
+
+Segment 1 numbers: the ending code builds addresses below `0x2D4FC0` with
+segment 1 relocations (offsets into the `.bss`, e.g. `0x2B0E8`), which read
+as code: the tools followed them into some 7000 functions. `mipsgen.Boot`
+now keeps each relocation's address segment and moves such numbers to
+`0x1000000` + offset (`canon`, `ptr`; `psp_xa1` in the generated code); the
+data the code reads in `.rodata` (the closing credits' strings) is copied
+too.
+
+The voted globals inside the object arrays (fighters, projectiles, pools)
+are dropped: a region starting inside an array hid the array's translation
+for the addresses after it (`0x80B408`, player 2, had none).
+
+build/test/arc_end.sh `<name> <moves> <stages>`: arcade won stage after
+stage, then shots through the ending; `STAGE=9` puts the stage counter at
+the last, `EXTRA="SFA3_FORCE_CHAR=1:A"` makes the last opponent M.Bison.
+
 ### The CPU
 
 The CPU plays a character by a script (dreamcast.md, CPU players). The
@@ -730,8 +809,8 @@ her effect objects add small offsets to her base (`p_1C7974`).
 
 ## Gaps
 
-- Endings (`end`), the ranking's portraits (`rk`), the move list texture
-  (`0x10000E00`), the PSP's stages and music.
+- The ranking's portraits (`rk`), the move list texture (`0x10000E00`),
+  the PSP's stages and music.
 - The rest of the character tables (Character tables, above).
 - A ranking entry or saved data naming a PSP character would read past the
   Dreamcast's tables without the add-on.

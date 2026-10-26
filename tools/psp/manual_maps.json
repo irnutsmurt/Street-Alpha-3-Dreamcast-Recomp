@@ -12,6 +12,12 @@
    "0x39ca80",
    "0x8c17fbc0",
    "game state: the same layout below +0xA0 (+0x72 game mode, +0x35, +0x4A, +0x5D...); the Dreamcast keeps another block from +0xA0 (PSP 0x8082F8)"
+  ],
+  [
+   "0x87fcb0",
+   "0x87fe00",
+   "0x8c1a31d4",
+   "the ending's state (ending.py): the same layout (+0 the character, +4 the scene, +0x3C the script, +0x10C.. the directory's words, +0x110 / +0x118 the animation tables)"
   ]
  ],
  "functions": {
@@ -26,7 +32,10 @@
   "0x5f114": "0x8c04d122",
   "0x67b1c": "0x8c05082c",
   "0x67e50": "0x8c0509fe",
-  "0x732c0": "0x8c057520"
+  "0x732c0": "0x8c057520",
+  "0x1da64": "0x8c024ad4",
+  "0x1daa8": "0x8c024b1a",
+  "0x66cc": "0x8c01532a"
  },
- "_functions_about": "checked by hand: 1D044 object physics step (pos += vel, vel += accel); 1F338/1F3BC menu object spawn/free (PSP objects 0x94 bytes, DC 0x90, same fields below 0x90); 5DEDC/5E068/5DF68 fighter state changes (5DF68 also sets PSP +0xC0 = 2 around its body); 77E00 CPU, 5FD4C, 5F114 their callees; 67B1C neutral -> walk/crouch start (reads the two pause flags, the lever, calls the walk/crouch checks 67CB8/67E08/67D68 = 8C05090C/8C0509DC/8C050982, sets +0xC0..C2, returns 1 when it started one): align.py had it as the animation stepper 8C04C29C, which kept a PSP character's neutral stand from ever starting to walk; 67E50 its neighbour = 8C0509FE (align.py had 8C05082C); 732C0 = 8C057520 the CPU's routine runner (game state 2 +0xE, fighter +0x2F4, clamps +0x1DA, then 8C0B9DAC[+0x1C4]: the PSP's table 0x21E488), which the CPU script command 80 (0x76E5C, recompiled) reaches; recompiled, it took the whole PSP CPU engine along"
+ "_functions_about": "checked by hand: 1D044 object physics step (pos += vel, vel += accel); 1F338/1F3BC menu object spawn/free (PSP objects 0x94 bytes, DC 0x90, same fields below 0x90); 5DEDC/5E068/5DF68 fighter state changes (5DF68 also sets PSP +0xC0 = 2 around its body); 77E00 CPU, 5FD4C, 5F114 their callees; 67B1C neutral -> walk/crouch start (reads the two pause flags, the lever, calls the walk/crouch checks 67CB8/67E08/67D68 = 8C05090C/8C0509DC/8C050982, sets +0xC0..C2, returns 1 when it started one): align.py had it as the animation stepper 8C04C29C, which kept a PSP character's neutral stand from ever starting to walk; 67E50 its neighbour = 8C0509FE (align.py had 8C05082C); 732C0 = 8C057520 the CPU's routine runner (game state 2 +0xE, fighter +0x2F4, clamps +0x1DA, then 8C0B9DAC[+0x1C4]: the PSP's table 0x21E488), which the CPU script command 80 (0x76E5C, recompiled) reaches; recompiled, it took the whole PSP CPU engine along; the PSP's ending engine's (ending.py): 1DA64 = 8C024AD4 an object's animation starts (the frame at +0x1C, its first 4 bytes to +0x4A, the Dreamcast's +0x3A), 1DAA8 = 8C024B1A an animation steps a frame (8 matching call sites in paired routines), 66CC = 8C01532A a free 16-byte slot of 96 (PSP 0x806310, Dreamcast 8C186AE8) filled from the arguments (3 call sites)"
 }

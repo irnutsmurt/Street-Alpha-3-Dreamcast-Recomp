@@ -54,6 +54,9 @@ extern const uint32_t g_psp_fn_addr[];  /* each function's PSP address (logs) */
 /* --- for the generated code --- */
 uint32_t psp_add_slow(uint32_t p, int32_t d);
 uint32_t psp_xa(uint32_t psp_addr);
+/* an address built for segment 1 (.bss): its offsets below the .bss's start (0x2D4FC0) would read as
+ * segment 0's; the tools have them at 0x1000000 + offset (tools/psp/mipsgen.py SEG1_LOW) */
+static inline uint32_t psp_xa1(uint32_t a) { return psp_xa(a < 0x2D4FC0u ? a + 0x1000000u : a); }
 void psp_call_dc(uint32_t dc_addr);
 void psp_icall(uint32_t addr);
 void psp_unmapped(uint32_t psp_addr);

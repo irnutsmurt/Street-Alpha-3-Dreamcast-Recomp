@@ -62,9 +62,11 @@ HOOKS = {
     0x8C069D64: "hle_select_palette",  # select screen palettes: the PSP characters' portraits (psp_load.c)
     0x8C018084: "hle_layout_draw",  # layouts (select screen): the PSP characters' extra cells (psp_load.c)
     0x8C017900: "hle_layout_draw_set",  # the same, a base from a table (versus' select screen)
+    0x8C024AD4: "hle_ending_anim",  # an animation starts: the PSP characters' endings draw people from the fighters' banks (psp_load.c)
+    0x8C0218B6: "hle_ending_setup",  # the ending's setup, its handlers in: the PSP's for the PSP characters' endings (psp_load.c)
 }
 # Hooked functions whose original body is still emitted, as <name>_orig.
-KEEP_ORIGINAL = {0x8C0253F8, 0x8C017900, 0x8C058516, 0x8C06443C, 0x8C05206E, 0x8C0520F0, 0x8C052180, 0x8C052268, 0x8C069D34, 0x8C069DCC, 0x8C0126F4, 0x8C012C80, 0x8C018E9C, 0x8C069D64, 0x8C018084, 0x8C01348E, 0x8C07AF3C, 0x8C07D988, 0x8C0625E0, 0x8C02EB8C, 0x8C02EE26, 0x8C07B7B4, 0x8C07D2E0, 0x8C07CD5A, 0x8C07CE14, 0x8C094510, 0x8C0100BC, 0x8C07BC42, 0x8C07E17C, 0x8C06273C}
+KEEP_ORIGINAL = {0x8C0253F8, 0x8C017900, 0x8C024AD4, 0x8C0218B6, 0x8C058516, 0x8C06443C, 0x8C05206E, 0x8C0520F0, 0x8C052180, 0x8C052268, 0x8C069D34, 0x8C069DCC, 0x8C0126F4, 0x8C012C80, 0x8C018E9C, 0x8C069D64, 0x8C018084, 0x8C01348E, 0x8C07AF3C, 0x8C07D988, 0x8C0625E0, 0x8C02EB8C, 0x8C02EE26, 0x8C07B7B4, 0x8C07D2E0, 0x8C07CD5A, 0x8C07CE14, 0x8C094510, 0x8C0100BC, 0x8C07BC42, 0x8C07E17C, 0x8C06273C}
 
 
 def extra_entries():
