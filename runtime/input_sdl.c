@@ -282,6 +282,15 @@ static void control_file(PadState *st) {
     } else if (!strcmp(cmd, "refill")) {  /* refill <player|-1>: keep a fighter at full health (testing) */
         extern int g_refill_player;
         g_refill_player = atoi(arg);
+    } else if (!strcmp(cmd, "call")) {  /* call <hex address> [hex r4 r5 r6 r7]: run a guest function (testing) */
+        uint32_t args[4] = {0, 0, 0, 0}, saved[16], pr = g.pr;
+        sscanf(line, "%*s %*s %x %x %x %x", &args[0], &args[1], &args[2], &args[3]);
+        for (int i = 0; i < 16; i++) saved[i] = g.r[i];
+        for (int i = 0; i < 4; i++) g.r[4 + i] = args[i];
+        call_indirect((uint32_t)strtoul(arg, NULL, 16), 0);
+        logf_("call %s(%08X, %08X, %08X, %08X) = %08X", arg, args[0], args[1], args[2], args[3], g.r[0]);
+        for (int i = 0; i < 16; i++) g.r[i] = saved[i];
+        g.pr = pr;
     } else if (!strcmp(cmd, "poke")) {  /* poke <hex address> <value>: write a guest byte (debug) */
         W8((uint32_t)strtoul(arg, NULL, 16), (uint32_t)n);
     } else if (!strcmp(cmd, "fill")) {  /* fill <hex address> <bytes> <value>: write guest bytes (debug) */

@@ -406,6 +406,39 @@ Added in 0.2.5 (Yun's crash before the final Bison fight; bad reads in his
 - Two more by an effect object's +0x42 (a character): `8C0BC17C` ((x, y),
   `f_8C05C3D8`, PSP `0x220840`) and `8C0BC314` (`f_8C05C562`, `0x220A00`).
 
+Added in 0.2.6 (Eagle's crash in a fight against Maki: "call to unrecompiled
+address 05030201 from 8C05A9E2"): sparks, effect type 4 in pool A. A spark's
+subtype (+3) picks its first handler from `8C0BBBCC` (21 on the Dreamcast,
+`8C05A9D8`), its second from `8C0BBC58` (`f_8C05AC58`) and its animation
+number from `8C0BBC20` (`f_8C05ABA6`, a number of the 85 animations at
+`8C0BBA68`). The PSP has a 22nd, subtype 21 (its tables `0x220284`,
+`0x220314`, `0x2202DC`): animation 5, the common second handler, and a
+first handler of its own, `0x79948` (a random offset from `0x2202F4`, +9 =
+0, +0xC/+0xD = -1/2 unless +0x79, then the animation by subtype). It comes
+from a 32-byte record's byte 20: `f_8C05ADAE(fighter, n)` takes record n of
+the table at fighter +0xD0 (the PSP's +0xE0; 0 most of the time, set by
+some moves) and `f_8C05ADD0(fighter, opponent, record)` makes the spark;
+the PSP's twin `0x79D30` is called from Eagle's code (`0x1B323C`, record
+0x67, his state handler `0x1B30E8` on animation event 0x13), Maki's
+(`0x1B9A70`, 0x6A) and Ingrid's (0x54, 0x56). The Dreamcast read entry 21
+past the table: the bytes `01 02 03 05`. The add-on moves the three tables
+with a 22nd entry (the second handler's and the animation from the PSP's,
+`ptr` and `copy`), and the first handler is the PSP's code: recompiled and
+given a stub in the extension RAM like the ending's handlers
+(`build_char.ENGINE_HANDLERS`), its PSP data read in the Dreamcast's copies
+(`ENGINE_DATA`: the animation pointers and the random offsets are the same
+bytes). Checked with the `call` control command: a subtype 21 spark made by
+the game's own spawner runs `p_079948`, sets animation 5 (`8C0BA8B0`) and
+goes on like subtype 20's. Also extended: `8C0B98F2` (17 -> 22 entries,
+PSP `0x21E10A`), a hit's spark by its record's byte 20 (`f_8C055928`,
+(subtype, size)).
+
+And the intro pairings' twin for the round's end, `8C0B9110` (PSP
+`0x21D778`, `f_8C04E35C`: fighter +0x2E4 from `8C0B2170` / `8C0B2176`, 6
+values; the new characters' lists use 0 and 1): unmoved, Eagle's entry was
+`00FFFFFF` and the scan read from `01000001` up, 130,000 bad reads as his
+first fight began (found by an arcade run with `SFA3_MMIO_BT=01000001`).
+
 Two tables by object type are moved the same way (with no entries added:
 the characters register their handlers as a fight starts, `f_8C046D6E`).
 The new characters' types run past the Dreamcast's ends: written there, a
@@ -1139,6 +1172,9 @@ her effect objects add small offsets to her base (`p_1C7974`).
 | `SFA3_FORCE_HEALTH=<fighter>:<value>` | keep fighter 0/1's health at most value (1: a hit wins the round) |
 | control `health <fighter\|-1> <value>` | the same, changed while running (-1: off) |
 | control `refill <fighter\|-1>` | keep a fighter at full health (-1: off) |
+| control `call <hex address> [hex r4 r5 r6 r7]` | run a guest function with those arguments (logs r0) |
+| `SFA3_WATCH_VALUE=<hex>` | `SFA3_WATCH_WRITE` logs only writes of that value |
+| `SFA3_WATCH_EVERY=<hex stride>:<hex offset>` | ... and only that field of each object (`B0:3`: effect objects' subtype) |
 | `SFA3_CHEAT_CPU_KO=1`, `SFA3_CHEAT_HEALTH=1` | the CHEATS menu's One hit KO (every CPU fighter: the dolls' fight too) and Infinite health, without touching `sfa3.cfg` (settings from the environment aren't saved) |
 | `SFA3_NO_NATIVE=1` | the add-on's conversions in Python, not the C library (`native.py`) |
 | `SFA3_ADDON_CACHE=<dir>` | `build_char.py` run by itself caches its converters' results there (`cache.py`), as the setup does |
@@ -1189,7 +1225,12 @@ opponent: the CPU playing a character). `arc_dlg.sh <name> <moves> <fights>`
 (arcade fight after fight with shots through each lead-in; 11 fights for
 Yun: the dolls' detour, then Bison and the ending, with `EXTRA="SFA3_CHEAT_CPU_KO=1
 SFA3_CHEAT_HEALTH=1"`: the dolls are two CPU fighters), `yun_final.sh`
-(the last fight in full, `health`/`refill`). `scan_rows.py` (literals into
+(the last fight in full, `health`/`refill`). `eagle_maki.sh` (Versus,
+Eagle against Maki, both refilled, random attacks), `em_special.sh` /
+`em_guard.sh` (every motion with every button; `PLAYERS=1 GUARD2=right`:
+Maki blocking), `spark21.sh <subtype>` (a spark of that subtype made with
+`call`), `hit.gdb` (gdb: each `f_8C055928` call's record, with `BIN="gdb -q
+-batch -x build/test/hit.gdb --args ./build/cmake/sfa3"`). `scan_rows.py` (literals into
 data that look like character tables not moved: 1-, 2- and 4-byte entries,
 second rows), `show_use.py <addr>...` (the recompiled code around a
 literal's uses). The setup: `time_update.py [first|second|full]` (an update

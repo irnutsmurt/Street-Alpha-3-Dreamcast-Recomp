@@ -155,6 +155,18 @@ TABLES = [
     T(0x8C0B8DF4, 1, 0x21D3F4, note="f_8C049A86"),
     T(0x8C0B8E1A, 1, 0x21D41E, note="f_8C049D28"),
     T(0x8C0B9A74, 1, 0x21E0D0, note="f_8C056B4C"),
+    # hit sparks (effect type 4, f_8C055928): a hit's spark from its hit record's byte 20, through
+    # 8C0B98F2 (subtype, size), or that byte itself as the subtype when the hit is guarded. The PSP adds
+    # entries 17-21 there and spark subtype 21 (Eagle's guarded hits): its first handler is the PSP's
+    # (build_char.ENGINE_HANDLERS), its second and its animation the Dreamcast's
+    T(0x8C0B98F2, 2, 0x21E10A, count=17, entries=22, new=range(17, 22),
+      note="hit sparks by a hit record's byte 20: (subtype, size) (f_8C055928)"),
+    T(0x8C0BBBCC, 4, None, count=21, entries=22, new=(),
+      note="spark (effect type 4) subtypes' first handler (8C05A9D8); 21 the PSP's (build_char.ENGINE_HANDLERS)"),
+    T(0x8C0BBC20, 1, 0x2202DC, count=21, entries=22, new=[21],
+      note="spark subtypes' animation (8C05ABA6: a number of 8C0BBA68)"),
+    T(0x8C0BBC58, 4, 0x220314, "ptr", count=21, entries=22, new=[21],
+      note="spark subtypes' second handler (f_8C05AC58)"),
     # an effect's place by its fighter's character, (x, y) from the fighter's (f_8C05BD9A); Vega's two
     # (with and without his mask) after the characters, at 40 and 41 (IMMEDIATES), on the PSP at 42 and 43
     T(0x8C0BBF14, 4, 0x2205E8, count=42, entries=44, new=list(NEW) + [42, 43],
@@ -168,6 +180,9 @@ TABLES = [
     # and the dolls, Eagle with Bison): those pairs are left out
     T(0x8C0B8F74, 4, 0x21D5A4, "ptr_list", note="intro pairings (f_8C04E280)",
       drop=lambda pair: pair >> 8 >= INTRO_VALUES),
+    # and the same for the round's end (f_8C04E35C): fighter +0x2E4 from 8C0B2170 / 8C0B2176 (6 values;
+    # the new characters' lists use 0 and 1)
+    T(0x8C0B9110, 4, 0x21D778, "ptr_list", note="win pairings (f_8C04E35C)", drop=lambda pair: pair >> 8 >= 6),
     T(0x8C0BA66C, 1, 0x21ED30, note="f_8C05A010 (sound)"),
     T(0x8C0BBD44, 2, 0x220408, count=37, note="f_8C05B05E; 37 entries (0x8C0BBD8E is the next object)"),
     T(0x8C0BC0BC, 4, 0x220798, note="f_8C05C01C; 2 u16"),
@@ -356,12 +371,12 @@ def patches(pr):
                 v = struct.pack("<I", data)
                 data = (data + len(rec) + 3) & ~3
             elif t.kind == "ptr_rank":
-                d = sorted({pr.du32(t.dc + 4 * k) for k in range(38)})
-                p = sorted({pr.pu32(t.psp + 4 * k) for k in range(38)})
+                d = sorted({pr.du32(t.dc + 4 * k) for k in range(n)})
+                p = sorted({pr.pu32(t.psp + 4 * k) for k in range(n)})
                 v = struct.pack("<I", d[p.index(pr.pu32(src))])
             elif t.kind in ("ptr", "ptr_list"):
                 target = pr.pu32(src)
-                pairs = {pr.pu32(t.psp + 4 * k): pr.du32(t.dc + 4 * k) for k in range(38)}
+                pairs = {pr.pu32(t.psp + 4 * k): pr.du32(t.dc + 4 * k) for k in range(n)}
                 if target in pairs:
                     dc_target = pairs[target]
                 elif t.kind == "ptr_list":
