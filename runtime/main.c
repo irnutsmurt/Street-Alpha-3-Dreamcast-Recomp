@@ -271,6 +271,8 @@ void video_vblank(void) {
     s_frames++;
     g_stats.vblanks++;
     cheats_frame();
+    void widescreen_frame(void);
+    widescreen_frame();
     {  /* SFA3_FORCE_CHAR=<player>:<hex id>: keep a fighter's character number (testing, debug) */
         static int player = -2, id;
         if (player == -2) {

@@ -43,7 +43,7 @@ target_compile_options(sfa3_game PRIVATE -O2 -w -fno-strict-aliasing -fwrapv)
 set(RENDERER "vulkan" CACHE STRING "Renderer backend: vulkan or null")
 set(RUNTIME_SRC
   runtime/main.c runtime/sh4.c runtime/irq.c runtime/mmio.c runtime/pvr.c
-  runtime/ta.c runtime/hle.c runtime/gdi.c runtime/maple.c runtime/aica.c
+  runtime/ta.c runtime/widescreen.c runtime/hle.c runtime/gdi.c runtime/maple.c runtime/aica.c
   runtime/overlay.c runtime/input_sdl.c runtime/task.c
   runtime/fiber.c runtime/sjlj.c runtime/arm_rt.c runtime/settings.c runtime/menu.c runtime/controls.c runtime/options.c runtime/display_menu.c runtime/buttoncfg.c runtime/pause_menu.c runtime/title_quit.c runtime/net.c runtime/netplay.c
   runtime/gameui.c runtime/lobby.c runtime/sprite_swap.c runtime/cheats.c runtime/option_menu.c runtime/psp.c runtime/psp_load.c runtime/read_trace.c runtime/chartables.c runtime/sprite_log.c)

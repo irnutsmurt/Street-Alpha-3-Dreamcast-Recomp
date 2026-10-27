@@ -64,9 +64,24 @@ HOOKS = {
     0x8C017900: "hle_layout_draw_set",  # the same, a base from a table (versus' select screen)
     0x8C024AD4: "hle_ending_anim",  # an animation starts: the PSP characters' endings draw people from the fighters' banks (psp_load.c)
     0x8C0218B6: "hle_ending_setup",  # the ending's setup, its handlers in: the PSP's for the PSP characters' endings (psp_load.c)
+    0x8C01A08E: "hle_scroll_object",  # an object's screen position less its scroll layer's: widescreen's slide (widescreen.c)
+    0x8C01EBA8: "hle_stage_layout",   # the fight's background laid out: widescreen draws it wider (widescreen.c)
 }
+# Instructions given other code (codegen.REPLACE): widescreen (runtime/widescreen.c). The sprite part drawer
+# (f_8C018E9C) skips a tile column past the 4:3 screen's edges, right (ctx +0x28, 640) and left (minus a tile);
+# a wide picture's margins are g_wide_cull pixels more each way (0 for 4:3). Four copies of the column loop.
+_RIGHT = "g.t = FPR() ? (DR(3) + g_wide_cull > DR(4)) : (g.fr[3].f + g_wide_cull > g.fr[4].f);"
+_LEFT = "g.t = FPR() ? (DR(4) > DR(3) - g_wide_cull) : (g.fr[4].f > g.fr[3].f - g_wide_cull);"
+REPLACE = {0x8C0191E4: _RIGHT, 0x8C0191F2: _LEFT, 0x8C019578: _RIGHT, 0x8C019586: _LEFT,
+           0x8C019994: _RIGHT, 0x8C0199A2: _LEFT, 0x8C019D34: _RIGHT, 0x8C019D42: _LEFT,
+           # f_8C02472E: a stage object is drawn while its X on the screen + 64 is 0 - 0x1FF; with widescreen
+           # g_wide_units more on each side
+           0x8C02475C: "g.r[4] += 64u + (uint32_t)g_wide_units;",
+           0x8C024776: "g.r[4] += 64u + (uint32_t)g_wide_units;",
+           0x8C024778: "g.r[3] = 0x00000200u + 2u * (uint32_t)g_wide_units;"}
+
 # Hooked functions whose original body is still emitted, as <name>_orig.
-KEEP_ORIGINAL = {0x8C0253F8, 0x8C017900, 0x8C024AD4, 0x8C0218B6, 0x8C058516, 0x8C06443C, 0x8C05206E, 0x8C0520F0, 0x8C052180, 0x8C052268, 0x8C069D34, 0x8C069DCC, 0x8C0126F4, 0x8C012C80, 0x8C018E9C, 0x8C069D64, 0x8C018084, 0x8C01348E, 0x8C07AF3C, 0x8C07D988, 0x8C0625E0, 0x8C02EB8C, 0x8C02EE26, 0x8C07B7B4, 0x8C07D2E0, 0x8C07CD5A, 0x8C07CE14, 0x8C094510, 0x8C0100BC, 0x8C07BC42, 0x8C07E17C, 0x8C06273C}
+KEEP_ORIGINAL = {0x8C01A08E, 0x8C01EBA8, 0x8C0253F8, 0x8C017900, 0x8C024AD4, 0x8C0218B6, 0x8C058516, 0x8C06443C, 0x8C05206E, 0x8C0520F0, 0x8C052180, 0x8C052268, 0x8C069D34, 0x8C069DCC, 0x8C0126F4, 0x8C012C80, 0x8C018E9C, 0x8C069D64, 0x8C018084, 0x8C01348E, 0x8C07AF3C, 0x8C07D988, 0x8C0625E0, 0x8C02EB8C, 0x8C02EE26, 0x8C07B7B4, 0x8C07D2E0, 0x8C07CD5A, 0x8C07CE14, 0x8C094510, 0x8C0100BC, 0x8C07BC42, 0x8C07E17C, 0x8C06273C}
 
 
 def extra_entries():
@@ -151,6 +166,7 @@ def run(disc_dir, out_dir, report=None, progress=None):
     img = Image(data, MAIN_BASE)
     codegen.REPLACE.clear()
     codegen.REPLACE.update({a: code for a, code, _ in chartables.REPLACE})
+    codegen.REPLACE.update(REPLACE)
     codegen.IMMEDIATE.clear()
     codegen.IMMEDIATE.update({a: chartables.immediate(a) for a, _ in chartables.IMMEDIATES})
     imm_defaults = [immediate_value(img, a) for a, _ in chartables.IMMEDIATES]

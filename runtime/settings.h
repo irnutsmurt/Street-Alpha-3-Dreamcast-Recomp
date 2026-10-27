@@ -11,6 +11,7 @@ typedef struct {
     int window_scale;       /* windowed size: 0 = fit the screen, N = N x 640x480 */
     int fs_width, fs_height, fs_refresh;  /* exclusive fullscreen mode (refresh in Hz) */
     int picture;            /* PICTURE_* */
+    int widescreen;         /* 1 = fights as wide as the window (widescreen.c) */
     int color;              /* COLOR_*: colour response of the final picture */
     int scale;              /* internal render resolution multiplier (1 = 640x480) */
     int vsync;              /* 1 = wait for the display's refresh */

@@ -10,7 +10,8 @@ layout(push_constant) uniform PC {
     float zscale;      // maps 1/w into [0,1]
     uint flags;
     float alpha_ref;
-    float pad0, pad1, pad2;
+    float xoff;        // added to x: the wide picture's margin (SFA3_WIDE), 0 normally
+    float pad1, pad2;
     vec4 fog_color;
 } pc;
 
@@ -21,7 +22,7 @@ layout(location = 2) out vec4 v_offset;
 void main() {
     float invw = max(in_pos.z, 1e-8);
     float w = 1.0 / invw;
-    vec2 ndc = in_pos.xy * pc.scale - 1.0;
+    vec2 ndc = (in_pos.xy + vec2(pc.xoff, 0.0)) * pc.scale - 1.0;
     // depth linear in screen space (1/w), perspective-correct varyings via w
     gl_Position = vec4(ndc * w, clamp(invw * pc.zscale, 0.0, 1.0) * w, w);
     v_uv = in_uv;

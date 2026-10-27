@@ -268,7 +268,7 @@ static void redraw(void) {
     if (s_page == 2) { redraw_cheats(); return; }
     memset(s_canvas, 0, sizeof s_canvas);
     list_items();
-    const int px = 22, py = 6, pw = MENU_W - 44, ph = 228, row = s_nitems > 15 ? 11 : s_nitems > 13 ? 12 : 13;
+    const int px = 22, py = 6, pw = MENU_W - 44, ph = 228, row = s_nitems > 17 ? 10 : s_nitems > 15 ? 11 : s_nitems > 13 ? 12 : 13;
     fill(px - 2, py - 2, pw + 4, ph + 4, RGBA(240, 200, 40, 255));   /* border */
     fill(px, py, pw, ph, RGBA(16, 20, 48, 235));                     /* panel */
     fill(px, py, pw, 18, RGBA(40, 52, 120, 255));                     /* title bar */
