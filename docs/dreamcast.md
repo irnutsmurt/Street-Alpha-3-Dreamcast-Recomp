@@ -47,7 +47,7 @@ comes in overlays (`PLnnA/B/C.BIN`, one per player slot) at `0x8C800000`,
 | `8C186AB8` | a pool of 3 x `0x30` (allocator `8C0256DC`) |
 | `8C1870E8` | menu sprite objects, `0x90` bytes (Option Mode buttons are kind 12) |
 | `8C1882E8` | free counters for the object pools (one byte each) |
-| `8C1888B4` | camera / scroll block; +0x10 the camera X (16.16) |
+| `8C1888B4` | camera / scroll block (the main background layer); +0x10 the camera X (16.16); see Stage backgrounds |
 | `8C188D48` | World Tour entries, 2 x `0x354` |
 | `8C1A1F48` | sprite parts table per sprite bank (pointers) |
 | `8C1A1FE8` | sprite tiles per sprite bank (pointers) |
@@ -72,7 +72,7 @@ comes in overlays (`PLnnA/B/C.BIN`, one per player slot) at `0x8C800000`,
 |---|---|
 | +0, +2 (u16) | routine numbers; +2 = 1 on the select screens, 2 in a fight |
 | +3 | Option Mode cursor |
-| +4, +6 (u16) | screen sub-state; in a fight +6 is 2 the round's intro, 3 the round, 4 round over |
+| +4, +6 (u16) | screen sub-state. In arcade (+2 = 2): +4 1 the map and the wipe to it, 2 the VS screen and the wipe into the fight, 3 the fight (+6: 2 the round's intro, 3 the round, 4 round over, 5 the win pose), 4 the win quote |
 | +7, +8 | Option Mode: the open screen + 1, a screen is open |
 | +0x21 (`8C17FBE1`) | frame counter (one per game frame) |
 | +0x72 | game mode (1 Versus, 3 World Tour, 6 Team, 8 Dramatic, 12 Network, 13 VS Dramatic) |
@@ -660,6 +660,102 @@ capitals on rows 2-12.
 `f_8C026AD6`. The per-fighter update is `f_8C04729E`. `f_8C0F6E40` waits
 for the render to finish (`8C76E808`) with a timeout and resets the
 PowerVR on one.
+
+## Stage backgrounds
+
+Units: the game's screen is 384 x 224 units (640 x 448 pixels here, 1 unit
+= 1.667 pixels).
+
+Each frame `f_8C021EDC` moves the camera (`f_8C02212E`), the floor's block
+(`f_8C0223AA`), layer 1 (`f_8C021F1C`) and layer 3 (`f_8C0221F4`), then
+lays the layers out (`f_8C01EBA8`): the polygons are placed now (through
+the global screen offset `8C18EF4C` / `8C18EF50`, float pixels) and drawn
+at the frame's end.
+
+| Block | |
+|---|---|
+| `8C188818` | layer 1 (far), `0x9C` bytes |
+| `8C1888B4` | the main layer, the camera's |
+| `8C188950` | layer 3 |
+| `8C1889EC` | the floor's (+0x1C is `8C188A08`) |
+
+A layer block: +2 kind (1: X less `8C188A5C`), +3 its layout (below), +7
+set-up step (0 until the layout's first call starts it), +8 its middle X
+(16.16; 448), +0x10 X (16.16, +0x12 the whole part), +0x20 the X it moves
+to, +0x50 an offset (some stages scroll a layer by itself through it:
+backgrounds 14 and 37-40), +0x58 a whole-unit offset, +0x9B which tile
+layout. The main block's +0x20 is the camera's X (+0x10 follows it), +0x44
+/ +0x46 its limits (the walls: `0x100` and `0x280` on every stage, so the
+middle is 448) and +0x7B the layers to lay out: 1 layer 1, 2 the main one,
+4 layer 3, 8 the stage's own drawing (below).
+
+The background (`R16(8C17FC60)`, not the stage number at `8C17FCC4`)
+indexes `8C0A0C9C` (the stage's own drawing: `f_8C02108C` the floor on
+most, `f_8C0212C4`, `f_8C0214AA` 0A's and 1E's), `8C0A131C` (the layers'
+start), `8C0A146C` (4 x s16: layer 1's k and its Y's, layer 3's), `8C0A15BC`
+/ `8C0A1610` (the floor's).
+
+The floor's block (`8C1889EC`, `f_8C0223AA` each frame): +4 1 while in
+use, +0x1C (`8C188A08`, q) = (camera - middle) / +0x80 (16.16; +0x80 from
+`8C0A1610`[background]), +0x70 (`8C188A5C`, A) = q x (+0x84 - +0x82) (+0x84
+`0xD8`, +0x82 `0xD8` - `8C0A15BC`[background]). Both are 0 with the camera in
+the middle and grow with it.
+
+A far layer's X (`f_8C02291C`) is +8 + (camera - middle - A) x k / 16 +
+(+0x50), then + (+0x58); backgrounds 4 and 28 use `f_8C022984` (camera -
+middle - q x k + ...). So each layer's X is its middle position plus a rate
+x (camera - middle), the rate fixed per stage (0A: 0.95 and 0.95; 0C: 0.80
+and 0.34; 19: 0.24 and 0.48; 00: 0.20 and 0.61; 0B: 0.14 and 0.56; 06: 1
+and 1). The main layer's layout takes a share of the camera off its X too:
+`f_8C020804` draws at X - A (stage 00, +3 `0xA0`: X - 8q; stage 04, `0xA4`:
+X - q x (+0x84 - +0x82 + 2)), `f_8C01F57C` at X - A for the main layer
+(+2 = 1), `f_8C020AD8` (0A, 1E) at X; so the main backdrop moves slower than
+the fighters on most stages (0B: 0.56, the same as layer 3: the two are cut
+to fit each other). The 4:3 game shows a layer from where it is with the
+camera at one wall to where it is at the other, plus a screen: its art, as a
+rule; the art behind nearer layers is left unpainted (flat patches of
+black, blue, magenta: 0C's sky).
+
+Layouts by +3: the main layer `0xAA` / `0xBE` `f_8C020AD8`, `0xB5` / `0xC0`
+`f_8C01F57C` (map +`0x400` / +`0x1400`), else `f_8C020804`; layer 1 `0x7A` /
+`0x8E` `f_8C020D08` (a few big textured quads), `0x90` `f_8C020EC0`, else
+by +0x9B `f_8C01F57C` (16-unit tiles) or `f_8C01F8C0` (32-unit tiles);
+layer 3 `0xE5` / `0xF0` `f_8C01F8C0` (map +`0x400` / +`0x1400`), else as
+layer 1. Tile maps: `8C19A424` (layer 1), `8C19C424` (main), `8C19E424`
+(layer 3), 1024 units wide (X & `0x3FF`); `f_8C01F57C` / `f_8C01F8C0` stop
+at the map's end rather than going round to its start.
+
+Objects on a layer: obj +0x0E (`8C099A48`: 1 `8C188818`, 2 the main
+layer, 3 `8C188950`; 0 fixed to the screen). `f_8C01A08E(ctx, obj)` sets
+the screen position (ctx +0x6C / +0x6E) to the object's less its layer's,
+plus `8C188A08` x obj +0x26 (a depth) on the main layer. Some of the
+program's stage objects (effect pool C, `8C1853A8`) are fixed to the screen
+and place themselves by the camera: 06's city behind the window, 208 -
+0.875 x (camera - 448). `f_8C02472E` draws a stage object only while its
+screen X + 64 is 0 to `0x1FF`.
+
+The sprite part drawer (`f_8C018E9C` and three rotated copies) leaves out
+the tile columns past the screen's edges (`fcmp` at `8C0191E4` / `8C0191F2`,
+`8C019578` / `586`, `8C019994` / `9A2`, `8C019D34` / `D42`: 0 and 640.23).
+Each frame also draws thin black strips at the screen's sides (0 - 0.1 and
+640 - 640.23 pixels) and borders at the top (0 - 8) and bottom (456 - 480).
+
+Widescreen (`runtime/widescreen.c`) draws the margins by laying each layer
+out once more per side through the screen offset, draws the view as the
+game would with the camera further from a wall (each layer, the floor's q
+and A and the objects as they'd be there), puts black bars where a layer
+slower than the camera has no art, and widens the culls above
+(`tools/recomp/recompile.py` REPLACE). Only the fight's own screen (game
+state +2 = 2, +4 = 3) is wide. The renderer (`hole_bars` in
+`runtime/vk_renderer.c`) also widens a bar over any hole in the margin's
+opaque art (a layer's empty tiles, which nearer layers cover in the 4:3
+game; the caves 02 / 17 / 24 have them), from texels' alpha.
+
+Stages and their layers' rates, for reference (layer 1 / main / layer 3):
+the main layer moves at 1 on 0A and 1E, at the floor's share less on the
+rest; layers 1 and 3 from 0.14 (0B) to 1 (06). On 0A and 06 a 16:9
+picture is full at the walls; elsewhere the side with the wall is partly
+black there.
 
 ## Option Mode
 

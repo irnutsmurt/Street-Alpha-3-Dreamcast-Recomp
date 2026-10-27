@@ -54,6 +54,7 @@ static void item_change(int i, int dir) {
 #define VALUE_RIGHT 360
 #define ROW_Y0 48
 #define ROW_STEP 10
+#define ROW_LAST 162  /* the lowest a row may start (EXIT's place with 12 rows) */
 /* CHEATS has more rows: everything starts higher, the title just under the top frame */
 #define CHEATS_LIFT 20
 /* the game's row-highlight object only knows the original screen's rows;
@@ -85,9 +86,11 @@ static int cursor_pos(const int *rows, int n) {
 void hle_display_draw(void) {
     gameui_begin(TEXT_ARENA, TEXT_ARENA_END, 0x8C07C6B0u);
     const char *title = s_cheats ? "CHEATS" : "DISPLAY OPTION";
-    int lift = s_cheats ? CHEATS_LIFT : 0;
+    int rows[ROW_MAX], n = visible_rows(rows);
+    /* CHEATS starts higher; so does a long DISPLAY list, just enough that EXIT stays above the banner */
+    int lift = s_cheats ? CHEATS_LIFT : ROW_Y0 + (n - 1) * ROW_STEP + 4 > ROW_LAST ? ROW_Y0 + (n - 1) * ROW_STEP + 4 - ROW_LAST : 0;
     gameui_print(title, SCREEN_W / 2 - gameui_text_w(title) / 2, TITLE_Y - lift, COL_GOLD);
-    int rows[ROW_MAX], n = visible_rows(rows), y = ROW_Y0 - lift;
+    int y = ROW_Y0 - lift;
     for (int i = 0; i < n; i++) {
         int r = rows[i], sel = r == s_cursor;
         y = ROW_Y0 - lift + i * ROW_STEP + (r >= row_default() ? 4 : 0);

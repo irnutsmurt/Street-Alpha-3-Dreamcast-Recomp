@@ -73,6 +73,7 @@ typedef struct {
     VkDescriptorSet sets[18];
     int valid;
     int ready;             /* image holds decoded data (not just allocated) */
+    uint8_t *opaque;       /* a bit per texel: alpha at least half (widescreen's hole_bars), or NULL */
 } Texture;
 
 typedef struct {
@@ -128,6 +129,7 @@ static struct {
     uint64_t frame_no;
     uint32_t page_gen[VRAM_PAGES];
     uint32_t gen_counter;
+    uint32_t rt_w;            /* the render targets' width in guest pixels: 640, wider with widescreen (widescreen.c) */
     int shot_every;
     int sc_can_read;          /* swapchain images can be copied out (presented screenshots) */
     uint64_t frame_ns;        /* vsync at ~60 Hz: frame period of the display, else 0 */
@@ -505,6 +507,7 @@ int renderer_init(void *window) {
     R.window = window;
     R.scale = (uint32_t)g_settings.scale;
     if (R.scale < 1 || R.scale > 8) R.scale = 3;
+    R.rt_w = 640;
     const char *shot = getenv("SFA3_SHOT_EVERY");
     R.shot_every = shot ? atoi(shot) : 0;
     const char *shot_from = getenv("SFA3_SHOT_FROM");
@@ -646,6 +649,12 @@ uint64_t renderer_frame_ns(void) { return R.frame_ns; }
 /* Settings that need GPU objects recreated (vsync: swapchain; render scale:
  * render targets). Applied between frames. */
 static int s_rt_rebuild;
+static int s_margin_wanted;  /* widescreen: the margin the window asks for (units) */
+int widescreen_margin(void);
+float widescreen_margin_px(void);
+int widescreen_wanted(float aspect);
+void widescreen_set(int units);
+int widescreen_stage_frame(float *bar_l, float *bar_r, float *view);
 void renderer_settings_changed(void) {
     R.sc_dirty = 1;
     if ((uint32_t)g_settings.scale != R.scale) s_rt_rebuild = 1;
@@ -661,8 +670,10 @@ static void rebuild_render_targets(void) {
         memset(rt, 0, sizeof *rt);
     }
     R.scale = (uint32_t)g_settings.scale;
+    widescreen_set(s_margin_wanted);
+    R.rt_w = 640 + 2 * (uint32_t)(widescreen_margin_px() + 0.5f);
     s_rt_rebuild = 0;
-    logf_("render resolution now %ux%u", 640 * R.scale, 480 * R.scale);
+    logf_("render resolution now %ux%u", R.rt_w * R.scale, 480 * R.scale);
 }
 
 static RenderTarget *get_rt(Frame *f, uint32_t fb_addr) {
@@ -673,7 +684,7 @@ static RenderTarget *get_rt(Frame *f, uint32_t fb_addr) {
         for (int i = 0; i < MAX_RT; i++)
             if (!best || R.rts[i].last_used < best->last_used) best = &R.rts[i];
         if (!best->color.image) {
-            uint32_t w = 640 * R.scale, h = 480 * R.scale;
+            uint32_t w = R.rt_w * R.scale, h = 480 * R.scale;
             make_image(w, h, VK_FORMAT_R8G8B8A8_UNORM,
                        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
                            VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
@@ -798,6 +809,7 @@ static Texture *get_texture(Frame *f, uint32_t tcw, uint32_t tsp) {
         if (t->valid && t->last_used == R.frame_no) return NULL;  /* cache full this frame */
         destroy_image(&t->img);
         for (int s = 0; s < 18; s++) free_set(&t->sets[s]);
+        free(t->opaque);
         memset(t, 0, sizeof *t);
         t->key = key;
         t->valid = 1;
@@ -821,6 +833,12 @@ static Texture *get_texture(Frame *f, uint32_t tcw, uint32_t tsp) {
         /* decode in ordinary memory: the staging buffer is write-combined
          * (the decoder reads back what it wrote, which is slow there) */
         pvr_tex_decode(&key, R.decode_buf);
+        if (!t->opaque) t->opaque = malloc(((size_t)key.w * key.h + 7) / 8);
+        if (t->opaque) {
+            memset(t->opaque, 0, ((size_t)key.w * key.h + 7) / 8);
+            for (uint32_t k = 0; k < key.w * key.h; k++)
+                if ((R.decode_buf[k] >> 24) >= 128) t->opaque[k >> 3] |= (uint8_t)(1u << (k & 7));
+        }
         g_perf.tex_ns += SDL_GetTicksNS() - t0;
         g_perf.tex_decodes++;
         upload_pixels(f, t, key.w, key.h, R.decode_buf);
@@ -888,7 +906,96 @@ static void dump_render(const PvrFrame *pf) {
         logf_("  #%u list=%d n=%u isp=%08X tsp=%08X tcw=%08X tex=%ux%u@%06X box=(%.0f,%.0f)-(%.0f,%.0f) uv=(%.3f,%.3f)-(%.3f,%.3f) col=%08X",
               i, p->list, p->vertex_count, p->isp, p->tsp, p->tcw, key.w, key.h, key.addr, x0, y0, x1, y1,
               u0, v0, u1, v1, pf->verts[p->first_vertex].base);
+        if (!(p->isp & (1u << 25)) && p->vertex_count <= 8) {
+            char b[256];
+            int k = 0;
+            for (uint32_t j = 0; j < p->vertex_count; j++)
+                k += snprintf(b + k, sizeof b - k, " (%.3f,%.3f)", pf->verts[p->first_vertex + j].x, pf->verts[p->first_vertex + j].y);
+            logf_("    verts:%s", b);
+        }
     }
+}
+
+/* Widescreen: a layer's unpainted parts (empty tiles in its map) that nearer layers cover in the 4:3 game
+ * needn't be covered in the margins, where the layers line up as the 4:3 game never has them (they move at
+ * different rates). Where nothing in a margin covers the picture (the clear colour would show), the bar
+ * reaches over it: from the hole out, on every row whose 4:3 view's edge is itself covered (a stage that
+ * shows the clear colour there means it). Covering: an opaque textured polygon, or a translucent one blended
+ * by its alpha (or not at all) where its texel is opaque (sampled through the polygon's first triangle's
+ * mapping: sprites and tiles are parallelograms). Picture pixels (vertex x + xoff); rows every 4 pixels.
+ * The bars shrink by at most 2 pixels a frame, so that a fighter passing over a hole doesn't make them
+ * flicker. */
+#define HOLE_ROWS 112
+#define HOLE_COLS 1280
+static float s_hole_l, s_hole_r;
+
+static int texel_opaque(const Texture *t, const PvrPoly *p, const PvrVertex *v, float x, float y) {
+    const PvrVertex *a = &v[p->first_vertex], *b = a + 1, *c = a + 2;
+    float bx = b->x - a->x, by = b->y - a->y, cx = c->x - a->x, cy = c->y - a->y, det = bx * cy - by * cx;
+    if (det > -1e-6f && det < 1e-6f) return 1;
+    float px = x - a->x, py = y - a->y, s = (px * cy - py * cx) / det, r = (bx * py - by * px) / det;
+    float u = a->u + s * (b->u - a->u) + r * (c->u - a->u), w = a->v + s * (b->v - a->v) + r * (c->v - a->v);
+    int tx = (int)floorf(u * (float)t->key.w), ty = (int)floorf(w * (float)t->key.h);
+    tx = ((tx % (int)t->key.w) + (int)t->key.w) % (int)t->key.w;
+    ty = ((ty % (int)t->key.h) + (int)t->key.h) % (int)t->key.h;
+    uint32_t k = (uint32_t)ty * t->key.w + (uint32_t)tx;
+    return (t->opaque[k >> 3] >> (k & 7)) & 1;
+}
+
+static void hole_bars(const PvrFrame *pf, const PvrVertex *vv, Texture *const *texs, float xoff, float view,
+                      float *bar_l, float *bar_r) {
+    static uint8_t cov[HOLE_ROWS][HOLE_COLS];
+    int w = (int)(640 + 2 * xoff + 0.5f);
+    if (w > HOLE_COLS) w = HOLE_COLS;
+    int vl = (int)(view + xoff + 0.5f);  /* the 4:3 view: columns vl to vr - 1 */
+    vl = vl < 1 ? 1 : vl > w - 642 ? w - 642 : vl;
+    int vr = vl + 640;
+    memset(cov, 0, sizeof cov);
+    for (uint32_t i = 0; i < pf->npolys; i++) {
+        const PvrPoly *p = &pf->polys[i];
+        const Texture *t = texs[i];
+        if (!t || p->vertex_count < 3 || (p->list != 0 && p->list != 2)) continue;
+        uint32_t src = p->tsp >> 29, dst = (p->tsp >> 26) & 7;
+        int keyed = p->list == 2;  /* translucent: by its texels' alpha */
+        if (keyed && !((src == 4 && dst == 5) || (src == 1 && dst == 0))) continue;
+        if (keyed && src == 1) keyed = 0;
+        if (keyed && !t->opaque) continue;
+        float x0 = 1e9f, x1 = -1e9f, y0 = 1e9f, y1 = -1e9f;
+        for (uint32_t k = 0; k < p->vertex_count; k++) {
+            const PvrVertex *v = &vv[p->first_vertex + k];
+            x0 = v->x < x0 ? v->x : x0, x1 = v->x > x1 ? v->x : x1;
+            y0 = v->y < y0 ? v->y : y0, y1 = v->y > y1 ? v->y : y1;
+        }
+        int c0 = (int)(x0 + xoff + 0.5f), c1 = (int)(x1 + xoff + 0.5f);  /* columns whose centres it covers */
+        int r0 = (int)((y0 - 10) / 4 + 0.999f), r1 = (int)((y1 - 10) / 4 + 0.999f);  /* rows' centres: 10 + 4r */
+        c0 = c0 < 0 ? 0 : c0, c1 = c1 > w ? w : c1, r0 = r0 < 0 ? 0 : r0, r1 = r1 > HOLE_ROWS ? HOLE_ROWS : r1;
+        if (c1 <= c0 || r1 <= r0 || (c0 > vl && c1 < vr)) continue;
+        for (int r = r0; r < r1; r++) {
+            float y = 10.0f + 4.0f * (float)r;
+            for (int side = 0; side < 2; side++) {
+                int a = side ? (c0 > vr - 1 ? c0 : vr - 1) : c0, b = side ? c1 : (c1 < vl + 1 ? c1 : vl + 1);
+                for (int c = a; c < b; c++)
+                    if (!cov[r][c] && (!keyed || texel_opaque(t, p, vv, (float)c + 0.5f - xoff, y))) cov[r][c] = 1;
+            }
+        }
+    }
+    int hl = 0, hr = 0;
+    for (int r = 0; r < HOLE_ROWS; r++) {
+        if (cov[r][vl]) {
+            int c = vl - 1;
+            while (c >= 0 && cov[r][c]) c--;
+            if (c + 1 > hl) hl = c + 1;
+        }
+        if (cov[r][vr - 1]) {
+            int c = vr;
+            while (c < w && cov[r][c]) c++;
+            if (w - c > hr) hr = w - c;
+        }
+    }
+    s_hole_l = (float)hl > s_hole_l - 2 ? (float)hl : s_hole_l - 2;
+    s_hole_r = (float)hr > s_hole_r - 2 ? (float)hr : s_hole_r - 2;
+    if (s_hole_l > *bar_l) *bar_l = s_hole_l;
+    if (s_hole_r > *bar_r) *bar_r = s_hole_r;
 }
 
 void renderer_draw(const PvrFrame *pf) {
@@ -897,7 +1004,8 @@ void renderer_draw(const PvrFrame *pf) {
     Frame *f = frame_begin();
     R.frame_no++;
     RenderTarget *rt = get_rt(f, pf->fb_w_sof1 & 0x7FFFFF);
-    uint32_t W = 640 * R.scale, H = 480 * R.scale;
+    uint32_t W = R.rt_w * R.scale, H = 480 * R.scale;
+    float xoff = (float)(R.rt_w - 640) / 2;  /* the 640 in the middle of a wide picture */
 
     /* guest framebuffer size from the clip registers */
     float gw = (float)((pf->fb_x_clip >> 16) & 0x7FF) + 1, gh = (float)((pf->fb_y_clip >> 16) & 0x3FF) + 1;
@@ -911,17 +1019,21 @@ void renderer_draw(const PvrFrame *pf) {
 
     /* resolve textures before the rendering scope (uploads are transfer ops) */
     static VkDescriptorSet *sets;
+    static Texture **texs;  /* each polygon's texture (NULL: none) */
     static uint32_t sets_cap;
     if (sets_cap < pf->npolys) {
         sets_cap = pf->npolys * 2;
         sets = realloc(sets, sets_cap * sizeof *sets);
+        texs = realloc(texs, sets_cap * sizeof *texs);
     }
     for (uint32_t i = 0; i < pf->npolys; i++) {
         const PvrPoly *p = &pf->polys[i];
         sets[i] = R.white_set;
+        texs[i] = NULL;
         if (!(p->isp & (1u << 25)) || !p->vertex_count) continue;
         Texture *t = get_texture(f, p->tcw, p->tsp);
         if (!t) continue;
+        texs[i] = t;
         int si = sampler_index(p->tsp);
         if (!t->sets[si]) t->sets[si] = alloc_set(t->img.view, R.samplers[si]);
         sets[i] = t->sets[si];
@@ -930,6 +1042,35 @@ void renderer_draw(const PvrFrame *pf) {
     VkDeviceSize vbytes = pf->nverts * sizeof(PvrVertex);
     if (f->vused + vbytes > f->vcap) return;  /* overflow: skip this render */
     memcpy((uint8_t *)f->vmap + f->vused, pf->verts, vbytes);
+    float bar_l, bar_r, view;  /* widescreen: black at the picture's sides, past a stage layer's art (widescreen.c) */
+    int wide_fight = widescreen_stage_frame(&bar_l, &bar_r, &view) && xoff > 0;
+    if (wide_fight) {
+        /* a wide fight: the untextured shapes' edges at the 4:3 screen's moved to the picture's: the borders at
+         * the top and bottom, flashes and the super moves' dimming as wide as the picture; the game's thin
+         * borders at the sides (0 - 0.1 and 640 - 640.23, laid out with the stage, so the margins' layouts
+         * put more of them about) out of it */
+        PvrVertex *vv = (PvrVertex *)((uint8_t *)f->vmap + f->vused);
+        for (uint32_t i = 0; i < pf->npolys; i++) {
+            const PvrPoly *p = &pf->polys[i];
+            if ((p->isp & (1u << 25)) || p->vertex_count < 3) continue;
+            float x0 = 1e9f, x1 = -1e9f, y0 = 1e9f, y1 = -1e9f;
+            for (uint32_t k = 0; k < p->vertex_count; k++) {
+                const PvrVertex *v = &vv[p->first_vertex + k];
+                x0 = v->x < x0 ? v->x : x0, x1 = v->x > x1 ? v->x : x1;
+                y0 = v->y < y0 ? v->y : y0, y1 = v->y > y1 ? v->y : y1;
+            }
+            if (x1 - x0 < 1.0f && y1 - y0 >= gh - 1.0f) {
+                for (uint32_t k = 0; k < p->vertex_count; k++) vv[p->first_vertex + k].x = -xoff - 8;
+                continue;
+            }
+            for (uint32_t k = 0; k < p->vertex_count; k++) {
+                PvrVertex *v = &vv[p->first_vertex + k];
+                if (v->x <= 0.5f) v->x = -xoff;
+                else if (v->x >= gw - 0.5f) v->x = gw + xoff;
+            }
+        }
+        hole_bars(pf, vv, texs, xoff, view, &bar_l, &bar_r);
+    }
     VkDeviceSize voff = f->vused;
     f->vused += (vbytes + 255) & ~255ull;
 
@@ -962,11 +1103,19 @@ void renderer_draw(const PvrFrame *pf) {
     VkViewport vp = {0, 0, (float)W, (float)H, 0, 1};
     vkCmdSetViewport(cmd, 0, 1, &vp);
     VkRect2D full = {{0, 0}, {W, H}};
+    if (xoff > 0 && !wide_fight) bar_l = bar_r = xoff;  /* a wide picture outside a fight: 4:3, black at the sides
+                                                          * (what the game draws past its screen's edges stays out) */
+    if (xoff > 0 && (bar_l > 0 || bar_r > 0)) {
+        float sx = (float)W / (gw + 2 * xoff);
+        int32_t x0 = (int32_t)(bar_l * sx + 0.5f), x1 = (int32_t)((float)W - bar_r * sx + 0.5f);
+        full = (VkRect2D){{x0, 0}, {(uint32_t)(x1 > x0 ? x1 - x0 : 0), H}};
+    }
     vkCmdSetScissor(cmd, 0, 1, &full);
     vkCmdSetFrontFace(cmd, VK_FRONT_FACE_CLOCKWISE);
     vkCmdBindVertexBuffers(cmd, 0, 1, &f->vbuf, &voff);
 
-    PvrPush push = {.scale = {2.0f / gw, 2.0f / gh}, .zscale = 1.0f / (maxz * 1.0001f)};
+    PvrPush push = {.scale = {2.0f / (gw + 2 * xoff), 2.0f / gh}, .zscale = 1.0f / (maxz * 1.0001f)};
+    push.pad[0] = xoff;  /* the shader's xoff */
     uint32_t fc = pf->fog_col_vert;
     push.fog[0] = ((fc >> 16) & 255) / 255.0f;
     push.fog[1] = ((fc >> 8) & 255) / 255.0f;
@@ -1060,10 +1209,13 @@ void renderer_draw(const PvrFrame *pf) {
                                sizeof push, &push);
             /* user tile clip (inside mode) */
             if (p->tile_clip == 2) {
-                int x0 = p->clip[0] * 32, y0 = p->clip[1] * 32, x1 = (p->clip[2] + 1) * 32, y1 = (p->clip[3] + 1) * 32;
-                float sx = W / gw, sy = H / gh;
-                VkRect2D sc = {{(int32_t)(x0 * sx), (int32_t)(y0 * sy)},
-                               {(uint32_t)((x1 - x0) * sx), (uint32_t)((y1 - y0) * sy)}};
+                int x0 = p->clip[0] * 32 + (int)xoff, y0 = p->clip[1] * 32;
+                int x1 = (p->clip[2] + 1) * 32 + (int)xoff, y1 = (p->clip[3] + 1) * 32;
+                float sx = W / (gw + 2 * xoff), sy = H / gh;
+                int32_t sx0 = (int32_t)(x0 * sx), sx1 = (int32_t)(x1 * sx);  /* within the bars */
+                sx0 = sx0 < full.offset.x ? full.offset.x : sx0;
+                sx1 = sx1 > full.offset.x + (int32_t)full.extent.width ? full.offset.x + (int32_t)full.extent.width : sx1;
+                VkRect2D sc = {{sx0, (int32_t)(y0 * sy)}, {(uint32_t)(sx1 > sx0 ? sx1 - sx0 : 0), (uint32_t)((y1 - y0) * sy)}};
                 vkCmdSetScissor(cmd, 0, 1, &sc);
                 vkCmdDraw(cmd, p->vertex_count, 1, p->first_vertex, 0);
                 vkCmdSetScissor(cmd, 0, 1, &full);
@@ -1145,7 +1297,7 @@ static void write_png(const char *path, const uint8_t *rgba, uint32_t w, uint32_
 }
 
 static void screenshot(RenderTarget *rt) {
-    uint32_t w = 640 * R.scale, h = 480 * R.scale;
+    uint32_t w = R.rt_w * R.scale, h = 480 * R.scale;
     VkBuffer buf;
     VkDeviceMemory mem;
     void *map;
@@ -1261,14 +1413,17 @@ void renderer_present_fb(void) {
         float sw = (float)R.sc_extent.width, sh = (float)R.sc_extent.height;
         float w = sw, h = sh;
         if (g_settings.picture == PICTURE_INTEGER) {
-            /* largest whole multiple of 640x480 that fits (pixel-perfect); below 1x, fall back to 4:3 */
+            /* largest whole multiple of 640x480 (wider with widescreen) that fits (pixel-perfect); below 1x, fall
+             * back to the picture's shape */
+            float pw = (float)R.rt_w;
             int k = 1;
-            while (640 * (k + 1) <= sw && 480 * (k + 1) <= sh) k++;
-            if (640 * k <= sw && 480 * k <= sh) { w = 640.0f * k; h = 480.0f * k; }
-            else { h = sw * 3.0f / 4.0f; if (h > sh) { h = sh; w = sh * 4.0f / 3.0f; } }
+            while (pw * (k + 1) <= sw && 480 * (k + 1) <= sh) k++;
+            if (pw * k <= sw && 480 * k <= sh) { w = pw * k; h = 480.0f * k; }
+            else { h = sw * 480.0f / pw; if (h > sh) { h = sh; w = sh * pw / 480.0f; } }
         } else if (g_settings.picture == PICTURE_4_3) {
-            h = sw * 3.0f / 4.0f;
-            if (h > sh) { h = sh; w = sh * 4.0f / 3.0f; }
+            float aspect = (float)R.rt_w / 480.0f;  /* 4:3, wider with widescreen */
+            h = sw / aspect;
+            if (h > sh) { h = sh; w = sh * aspect; }
         }
         /* whole-pixel placement keeps integer scaling crisp */
         float ox = (float)(int)((sw - w) / 2), oy = (float)(int)((sh - h) / 2);
@@ -1363,8 +1518,11 @@ void renderer_present_fb(void) {
         vkQueueWaitIdle(R.queue);
         screenshot(rt);
     }
-    /* a new render resolution takes effect between frames (after the menu closes,
-     * so the paused picture stays visible behind it) */
+    /* widescreen: the margin that fills the window (widescreen.c); a new one, like a new render
+     * resolution, takes effect between frames (after the menu closes, so the paused picture stays
+     * visible behind it) */
+    s_margin_wanted = widescreen_wanted((float)R.sc_extent.width / (float)(R.sc_extent.height ? R.sc_extent.height : 1));
+    if (s_margin_wanted != widescreen_margin()) s_rt_rebuild = 1;
     if (s_rt_rebuild && !menu_active()) rebuild_render_targets();
 }
 

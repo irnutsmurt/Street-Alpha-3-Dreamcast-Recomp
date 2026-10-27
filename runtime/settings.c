@@ -30,6 +30,7 @@ static const struct {
     K(fs_height, "SFA3_FS_HEIGHT", 0, 16384, "exclusive fullscreen height (0 = desktop)"),
     K(fs_refresh, "SFA3_FS_REFRESH", 0, 1000, "exclusive fullscreen refresh rate in Hz (0 = desktop)"),
     K(picture, "SFA3_PICTURE", 0, 2, "0 = 4:3, 1 = stretch to fill, 2 = integer scale (pixel perfect)"),
+    K(widescreen, "SFA3_WIDESCREEN", 0, 1, "1 = fights as wide as the window (the HUD stays in the middle; menus stay 4:3)"),
     K(color, "SFA3_COLOR", 0, 2, "0 = standard (VGA cable), 1 = TV levels (as on a television / in videos), 2 = vivid"),
     K(scale, "SFA3_SCALE", 1, 6, "internal render resolution multiplier (1 = 640x480, 3 = 1920x1440, 5 = 3200x2400 for 4K)"),
     K(vsync, "SFA3_VSYNC", 0, 1, "1 = wait for the display refresh (vsync)"),

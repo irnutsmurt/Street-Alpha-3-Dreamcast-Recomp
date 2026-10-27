@@ -24,6 +24,8 @@ typedef struct {
 } Sh4Ctx;
 
 extern Sh4Ctx g;
+extern float g_wide_cull;  /* widescreen: the picture's margin in pixels, the sprite drawer's edges widened by it (widescreen.c) */
+extern int g_wide_units;   /* widescreen: how much further out a stage's objects are drawn, units (widescreen.c) */
 
 #define FPSCR_PR (1u << 19)
 #define FPSCR_SZ (1u << 20)

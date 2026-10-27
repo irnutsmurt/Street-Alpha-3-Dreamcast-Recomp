@@ -182,6 +182,7 @@ settings are also on F1 / Esc at any time (this pauses the game):
 | Window size | 640x480 to 2560x1920 (window mode) |
 | Resolution | your monitor's modes and refresh rates (exclusive fullscreen) |
 | Picture | 4:3, stretch, integer (pixel-perfect) |
+| Widescreen | off / on: fights fill a wide window or screen with more of the stage, not stretched (the health and super bars stay where they are). The view never shows past what the stage has: near a wall it slides inward, and where a distant part of a stage runs out the sides are black. Menus, cutscenes and online games stay 4:3 |
 | Render res | internal resolution, 640x480 to 3840x2880 (3200x2400 is full detail on a 4K screen) |
 | VSync | on / off |
 | CRT | off, scanlines, PVM (a Trinitron monitor: beam, mask, glow); level 10-100 |

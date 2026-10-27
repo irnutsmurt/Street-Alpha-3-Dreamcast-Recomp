@@ -11,7 +11,7 @@ extern SDL_Window *g_window;
 void renderer_settings_changed(void);  /* vk_renderer.c: vsync / render scale */
 
 static const char *const s_labels[OPT_COUNT] = {
-    "WINDOW MODE", "WINDOW SIZE", "RESOLUTION", "PICTURE", "COLOR", "RENDER RES", "VSYNC",
+    "WINDOW MODE", "WINDOW SIZE", "RESOLUTION", "PICTURE", "WIDESCREEN", "COLOR", "RENDER RES", "VSYNC",
     "CRT", "CRT LEVEL", "TEXTURES", "SKIP INTRO",
 };
 
@@ -152,6 +152,7 @@ void option_value(int i, char *out, size_t n) {
         }
         break;
     case OPT_PICTURE: snprintf(out, n, "%s", pics[g_settings.picture]); break;
+    case OPT_WIDESCREEN: snprintf(out, n, "%s", g_settings.widescreen ? "ON" : "OFF"); break;
     case OPT_COLOR: snprintf(out, n, "%s", colors[g_settings.color]); break;
     case OPT_RENDER_RES: snprintf(out, n, "%dX%d", 640 * g_settings.scale, 480 * g_settings.scale); break;
     case OPT_VSYNC: snprintf(out, n, "%s", g_settings.vsync ? "ON" : "OFF"); break;
@@ -194,6 +195,7 @@ void option_change(int i, int dir) {
         break;
     }
     case OPT_PICTURE: g_settings.picture = wrap(g_settings.picture, dir, 0, 2); break;
+    case OPT_WIDESCREEN: g_settings.widescreen = !g_settings.widescreen; break;
     case OPT_COLOR: g_settings.color = wrap(g_settings.color, dir, 0, 2); break;
     case OPT_RENDER_RES:
         g_settings.scale = wrap(g_settings.scale, dir, 1, 6);
