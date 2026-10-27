@@ -49,6 +49,14 @@ EXT_ENDING, EXT_ENDING_END = 0x98F00000, 0x99000000
 # objects the ending engine makes whose handlers a character file registers during a fight (not loaded
 # then): Ingrid's effect (0x1C8EC0: type 58 in pool D, handler 0x1C8F08). (Dreamcast table, type, handler)
 ENDING_OBJECTS = ((0x8C0A9278, 58, 0x1C8F08),)
+# engine handlers only the PSP has, in Dreamcast tables the engine reads by number (moved by chartables,
+# room made): (table, entry, PSP handler). Like the ending's handlers they get a stub in the extension
+# RAM, a fixed address. Spark subtype 21, Eagle's guarded hits: 0x79948 (the PSP's table 0x220284)
+ENGINE_HANDLERS = ((0x8C0BBBCC, 21, 0x79948),)
+# PSP data those handlers read that the Dreamcast has the same of (not voted by align.py): read there
+# (PSP range, Dreamcast address). The sparks' animations (85 pointers, the records byte for byte) and the
+# random offsets a spark is placed at (16 x s16)
+ENGINE_DATA = ((0x220120, 0x220274, 0x8C0BBA68), (0x2202F4, 0x220314, 0x8C0BBC38))
 # the PSP's code changed when recompiled (mipsgen.REPLACE): the closing screen's handler (type 76) takes its
 # logo's part from the ending state's +0x138 (0 on the PSP; another struct on the Dreamcast): the add-on's,
 # from the ending's mark (ending.py, psp_load.c)
@@ -276,7 +284,7 @@ class Build:
             todo += [a for a in c.code_refs() if 0x1000 <= a < TEXT_END]
             lo, hi = c.own
             data += [(self.boot.ptr(a), 0) for a in range(lo, hi, 4) if a in self.boot.data_ptrs]
-        todo += list(ENGINE_ROOTS) + list(ENDING_HANDLERS) + [h for _, _, h in ENDING_OBJECTS]
+        todo += list(ENGINE_ROOTS) + list(ENDING_HANDLERS) + [h for _, _, h in ENDING_OBJECTS + ENGINE_HANDLERS]
         taken = set(todo)
         engine_recompiled = set()
         seen = set()
@@ -360,7 +368,7 @@ class Build:
         """the functions and the PSP data copies the ending handlers reach"""
         funcs, datas = set(), set()
         copies = sorted(self.copies)
-        todo = list(ENDING_HANDLERS) + [h for _, _, h in ENDING_OBJECTS]
+        todo = list(ENDING_HANDLERS) + [h for _, _, h in ENDING_OBJECTS + ENGINE_HANDLERS]
         while todo:
             x = todo.pop()
             if x in self.funcs:
@@ -860,6 +868,8 @@ def build(boot_path, psp_data, dc_dir, out_dir, maps, spec="26=26,27=27,28=28,29
     open(os.path.join(out_dir, "SELECT.PAC"), "wb").write(sel)
     for lo, hi, dc in screen_info["psp_groups"]:
         b.map_data(lo, hi, dc)
+    for lo, hi, dc in ENGINE_DATA:
+        b.map_data(lo, hi, dc)
     pairs = [(int(x, 16), int(y, 16)) for x, y in (p.split("=") for p in spec.split(","))]
     for cid, _ in pairs:
         b.add_char(cid)
@@ -883,6 +893,9 @@ def build(boot_path, psp_data, dc_dir, out_dir, maps, spec="26=26,27=27,28=28,29
               f"own data {c.own[0]:06X}-{c.own[1]:06X}, {w.size} bytes")
     patches = chartables.patches(chartables.Programs(os.path.join(dc_dir, "1ST_READ.BIN"), b.boot.data))
     patches.append((EXT_ENDING, b.ending_area()))
+    moved = {t.dc: t.ext for t in chartables.layout()}
+    for table, entry, handler in ENGINE_HANDLERS:
+        patches.append((moved[table] + 4 * entry, struct.pack("<I", b.abs_stub[handler])))
     print(f"character tables: {len(patches)} entries and records for the new characters")
     patches += sel_patches
     assert max(a + len(v) for a, v in sel_patches if chartables.EXT_SELECT <= a < chartables.EXT_END) <= \

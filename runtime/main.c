@@ -211,6 +211,16 @@ void watch_hit(uint32_t a, uint32_t v, int size) {
     static long long from = -1;  /* SFA3_WATCH_FROM=<frame>: ignore writes before it */
     if (from < 0) from = getenv("SFA3_WATCH_FROM") ? atoll(getenv("SFA3_WATCH_FROM")) : 0;
     if ((long long)g_vblank_count < from) return;
+    static long long value = -2;  /* SFA3_WATCH_VALUE=<hex>: only writes of that value */
+    if (value == -2) value = getenv("SFA3_WATCH_VALUE") ? (long long)strtoul(getenv("SFA3_WATCH_VALUE"), NULL, 16) : -1;
+    if (value >= 0 && v != (uint32_t)value) return;
+    static int stride = -1, at;  /* SFA3_WATCH_EVERY=<hex stride>:<hex offset>: only that field of each object */
+    if (stride < 0) {
+        const char *e = getenv("SFA3_WATCH_EVERY");
+        stride = e ? (int)strtoul(e, NULL, 16) : 0;
+        at = e && strchr(e, ':') ? (int)strtoul(strchr(e, ':') + 1, NULL, 16) : 0;
+    }
+    if (stride > 0 && (int)(((a & 0xFFFFFFu) - g_watch_ram) % (uint32_t)stride) != at) return;
     if (n++ > 400) return;
     void *frames[16];
     int k = backtrace(frames, 16);

@@ -36,6 +36,9 @@ comes in overlays (`PLnnA/B/C.BIN`, one per player slot) at `0x8C800000`,
 | `8C0A8380` | the detour before Bison by character: `0x1E` the dolls, `0x15` Balrog, `0xFF` none (`f_8C02C758`) |
 | `8C0B8F74` | intro pairings: a list per character of (opponent, value) bytes ending `FFFF` (`f_8C04E280`) |
 | `8C0B1F94` | intro routines (13), by fighter +0x2E3; `8C0B2154` / `8C0B2162` give it from a pairing's value |
+| `8C0B9110` | the same pairings for the round's end (`f_8C04E35C`): fighter +0x2E4 from `8C0B2170` / `8C0B2176` |
+| `8C0BBA68` | effect animations (85 pointers); sparks (effect type 4) pick one by subtype from `8C0BBC20` |
+| `8C0BBBBC` | sparks' handlers by state (4), then by subtype: `8C0BBBCC` the first (21), `8C0BBC58` the second (21) |
 | `8C17FC98` | a mode number (s16) indexing per-player tables (`8C09B068`, `8C0BA64C`) |
 | `8C17FC9B` | 2: a CPU fighter's files are character `0x15`'s (`f_8C01AEC8`) |
 | `8C17FD38` | fighters: 4 x `0x44C` bytes (to `8C180E68`) |
@@ -110,7 +113,13 @@ comes in overlays (`PLnnA/B/C.BIN`, one per player slot) at `0x8C800000`,
 | +0x32C | command input state: 8-byte blocks, one per command |
 
 Projectiles are laid out like the first `0x148` bytes of a fighter. Effect
-objects (`0xB0`) share the first part too.
+objects (`0xB0`) share the first part too: +0 in use, +2 type, +3 subtype,
++4 state, +0x48 the fighter it belongs to. `f_8C02570A(pool's last object,
+type, subtype)` takes a free one (from the end down); `f_8C02564C(type,
+subtype)` in pool A (32 from `8C1832A8`), its siblings the other pools.
+Sparks are type 4: `f_8C05ADD0(fighter, opponent, record)` makes one from a
+32-byte record (byte 20 the subtype, 15 its sound kind: `8C0BBCAC`), and
+`f_8C05ADAE(fighter, n)` with record n of the table at fighter +0xD0.
 
 ## Characters
 
