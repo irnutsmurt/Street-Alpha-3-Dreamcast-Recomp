@@ -70,10 +70,16 @@ void hle_sprite_draw(void) {
     }
     if (frame && (onward ? g_vblank_count >= frame && logged++ < 400 : g_vblank_count == frame)) {
         uint32_t obj = g.r[5], rec = g.r[6], base = g.r[7];
-        logf_("sprite: obj %08X bank %X part %X rec %08X pos %d,%d anim %08X caller %08X", obj, R16(obj + 0x46),
-              rec >= base ? (rec - base) / 12 : 0xFFFFu, rec, (int16_t)R16(obj + 0x12), (int16_t)R16(obj + 0x16),
-              R32(obj + 0x1C), g.pr);
+        logf_("sprite: obj %08X type %02X/%02X layer %u bank %X part %X rec %08X pos %d,%d anim %08X caller %08X", obj,
+              R8(obj + 2), R8(obj + 3), R8(obj + 0x0E), R16(obj + 0x46), rec >= base ? (rec - base) / 12 : 0xFFFFu, rec,
+              (int16_t)R16(obj + 0x12), (int16_t)R16(obj + 0x16), R32(obj + 0x1C), g.pr);
     }
+    /* the edges past which it leaves out tile columns: the HUD's the 4:3 screen's (widescreen.c) */
+    extern float g_wide_cull;
+    float widescreen_sprite_cull(uint32_t obj);
+    float cull = g_wide_cull;
+    g_wide_cull = widescreen_sprite_cull(g.r[5]);
     f_8C018E9C_orig();
+    g_wide_cull = cull;
 }
 

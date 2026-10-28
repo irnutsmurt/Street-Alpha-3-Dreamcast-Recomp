@@ -740,22 +740,83 @@ the tile columns past the screen's edges (`fcmp` at `8C0191E4` / `8C0191F2`,
 Each frame also draws thin black strips at the screen's sides (0 - 0.1 and
 640 - 640.23 pixels) and borders at the top (0 - 8) and bottom (456 - 480).
 
-Widescreen (`runtime/widescreen.c`) draws the margins by laying each layer
-out once more per side through the screen offset, draws the view as the
-game would with the camera further from a wall (each layer, the floor's q
-and A and the objects as they'd be there), puts black bars where a layer
-slower than the camera has no art, and widens the culls above
-(`tools/recomp/recompile.py` REPLACE). Only the fight's own screen (game
-state +2 = 2, +4 = 3) is wide. The renderer (`hole_bars` in
-`runtime/vk_renderer.c`) also widens a bar over any hole in the margin's
-opaque art (a layer's empty tiles, which nearer layers cover in the 4:3
-game; the caves 02 / 17 / 24 have them), from texels' alpha.
+Depth: each layer's polygons are at one depth, 1/w = -1 / the float at
+`8C0993E8` + (2 x its +0x7A + 1) x 4 (`f_8C01511E`): +0x7A 2 is -650 (the
+farthest), 4 -450, 6 -250; the stage's floor and other drawing -500 / -245.
+A layer's +0x62 is its scroll Y (units of 2 pixels; it moves a few units as
+the camera rises for a jump, each layer by its own amount).
+
+Filler: besides their art, the layers' maps hold parts the 4:3 game never
+shows, past where its camera reaches and behind nearer layers. Some is
+painted like the rest (more sky, more of a building, 0C's horizon); some is
+flat filler in colours the art doesn't use: 0C's sky is navy, black and
+magenta (214, 0, 148) behind the houses, 0F's sky ends in a navy column,
+05's jungle has flat grey blocks under it, several far layers have flat
+strips at their edges. Found by drawing each layer alone and sweeping the
+4:3 camera from wall to wall (`runtime/wide_filler.c`; the offline
+prototype `build/test/junk.py` found filler on 00, 01, 03, 04, 05, 0A, 0C,
+0F, 15, 1A, 1B, 21, 23, 29): hidden one-colour regions of a colour the shown
+art doesn't use, that don't continue the art around them; at the very end of
+a layer's art, such a region that is a solid rectangle even where its colour
+is near the art beside it (08's sky ends in dark-teal bands, 24 units by 148
+rows, never shown; 0D's has a flat column, always behind nearer layers); and
+next to those, regions of a colour the art does use whose own connected patch
+is hidden (0C's black corner: black shows in the 4:3 game's opposite corner),
+or at the very end of a layer's art.
+
+16:9 (`runtime/widescreen.c`): the camera is the game's, stopped a margin
+(64 units) from each wall; every layer moves at its own speed (from the
+stage's tables above); the margins are laid out through the screen offset;
+the culls above are widened (`tools/recomp/recompile.py` REPLACE), except
+for screen-fixed objects (obj +0x0E 0, the HUD's: the combo counter's banner
+starts its slide just past the screen's right edge) other than the stage's
+camera-placed ones in effect pool C. Only the fight's own screen (game state
++2 = 2, +4 = 3) is wide. The background extension continues a layer's own
+art, blurred, behind what's nearer, over its filler and, past the part of it
+the 4:3 game shows (its left edge with the camera at the left wall to its
+right edge at the right one), where its art runs out at that part's edge;
+the ends of a layer's art that the 4:3 game shows (0B's statue arm, layer 3,
+cut to fit the main layer's statue) are its own and stay. The fill is worked
+out once a stage from the layer captures (an opaque-list texel captured as
+the PowerVR shows it: opaque), in each layer's map (a unit by two pixels:
+its texels' size; `wide_extend` in `runtime/wide_filler.c`), and drawn each
+frame as a texture (`runtime/shaders/ext.frag`): a gap just behind the layer
+(whatever it draws, drawn after, covers it to the pixel; the game draws
+fully opaque tiles in the opaque list, those with transparent texels in the
+others), with a unit or two of it under the art next to it (the layer is
+drawn up to a pixel off the map's grid); filler, grown two units, just in
+front; the backdrop's own art behind it too (its layout leaves rows out at
+the top when the camera rises for a jump). The backdrop is the farthest layer
+laid out; there's none when that one scrolls by itself (+0x50 runs: 20's and
+25-28's clouds, also 0E's middle layer), which the game draws all of. Those
+layers aren't extended; the fight's own capture leaves them out (their +0x50
+isn't 0 by then), the wipe's has them (it is). Shaded as the layer's polygons
+are that frame (a super darkens the stage by their colour, `FF606060`). Only
+the margins are drawn: the middle of the 16:9 picture is the 4:3 game's own
+picture with its camera at the wide view's. Which layers need it is worked
+out each frame from their captures, near to far, and each is drawn over only
+the columns and rows that need it. Its colours follow the stage's palette
+animation (flames, lights, signs): each fill texel keeps the palette of the
+art it continues, and is scaled by that palette's colour now against the
+capture's.
+
+The fill is worked out on the wipe into the fight (game state +4 = 2), from
+the three layers captured on its first frame with them set up (+7), on
+threads (about 60-100 ms), a third of a second or more before the round's
+first frame; a fight is drawn wide only once its stage's fill is ready (were
+it still being worked out then, the fight waits for it; 16:9 picked during a
+fight: 4:3 for the few frames it takes). The game sends a frame's polygons to
+the TA as the next frame starts and the renderer draws them a frame later, so
+each stage layout's state (wide or not, the extensions' positions) goes with
+the TA list that holds its polygons (`ta.c`, `widescreen_list_begin`): the
+first 16:9 frame of a fight, a hit's screen shake.
 
 Stages and their layers' rates, for reference (layer 1 / main / layer 3):
 the main layer moves at 1 on 0A and 1E, at the floor's share less on the
-rest; layers 1 and 3 from 0.14 (0B) to 1 (06). On 0A and 06 a 16:9
-picture is full at the walls; elsewhere the side with the wall is partly
-black there.
+rest; layers 1 and 3 from 0.09 (0F) to 1 (06). A far layer of rate r has
+art for 384 + 384 r units as the 4:3 game shows it, against the 512 a 16:9
+view needs over the same camera range: short on 00, 02, 0B, 0F, 16, 17, 19,
+23, 24 (r under 1/3), at the walls on most others.
 
 ## Option Mode
 

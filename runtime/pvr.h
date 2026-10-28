@@ -101,6 +101,7 @@ typedef struct {
     uint32_t fog_col_vert, fog_col_ram, fog_density, pt_alpha_ref;
     uint32_t pal_ctrl;
     uint32_t isp_feed_cfg;   /* bit 0: translucent presort (1) vs autosort (0) */
+    uint32_t wide_list;      /* widescreen.c's state for the stage layout whose polygons this list holds (0 none) */
     float fog_table[128];
     PvrVertex bg[3];
     uint32_t bg_isp, bg_tsp, bg_tcw;

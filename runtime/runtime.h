@@ -52,6 +52,10 @@ extern Stats g_stats;
  * second went. ns; tex_decodes is a count. */
 typedef struct {
     uint64_t draw_ns, present_ns, gpu_wait_ns, tex_ns, idle_ns, tex_decodes;
+    uint64_t gpu_ns, gpu_frames, ext_passes;  /* the GPU's time on the game's renders (timestamps), 16:9 extensions */
+    uint64_t layout_ns, wide_ns, upload_bytes;  /* 16:9: the stage layouts (hle_stage_layout, the game's own work in
+                                                 * it too), the extension's own CPU work, the fill's and captures'
+                                                 * bytes to and from the GPU */
 } Perf;
 extern Perf g_perf;
 

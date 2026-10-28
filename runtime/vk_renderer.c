@@ -28,9 +28,25 @@ static const uint32_t blit_vert_spv[] =
 static const uint32_t blit_frag_spv[] =
 #include "blit.frag.inc"
     ;
+static const uint32_t ext_vert_spv[] =
+#include "ext.vert.inc"
+    ;
+static const uint32_t ext_frag_spv[] =
+#include "ext.frag.inc"
+    ;
 
 #define FRAMES 2
 #define MAX_RT 4
+#define EXT_MAX 6  /* background layers' margins extended at once (widescreen.c: a layer's left and right apiece) */
+/* layer captures (widescreen.c): ATLAS_W map units by 480 guest rows each, polygons from ATLAS_X on in guest
+ * pixels (the layouts put them there), ATLAS_SLOT apart: slot = layer x 3 + segment, 384 units a segment */
+#define ATLAS_LAYERS 3
+#define ATLAS_W 1024
+#define ATLAS_H 480
+#define ATLAS_ROWS 240
+#define ATLAS_X 8192.0f
+#define ATLAS_SLOT 1024.0f
+#define CAP_PALS 64
 #define MAX_TEX 2048
 #define VRAM_PAGES (8u << 20 >> 12)
 
@@ -73,7 +89,6 @@ typedef struct {
     VkDescriptorSet sets[18];
     int valid;
     int ready;             /* image holds decoded data (not just allocated) */
-    uint8_t *opaque;       /* a bit per texel: alpha at least half (widescreen's hole_bars), or NULL */
 } Texture;
 
 typedef struct {
@@ -89,6 +104,8 @@ typedef struct {
     void *smap;
     VkDeviceSize scap, sused;
     int recording;
+    int atlas_layers;      /* widescreen: the layer captures this frame copied out (bits), read at its fence */
+    int timed;             /* the game's render timed (timestamps 2 x frame index, read at its fence) */
 } Frame;
 
 static struct {
@@ -116,7 +133,35 @@ static struct {
     Image overlay;            /* settings menu canvas */
     VkDescriptorSet overlay_set;
     int overlay_ready;
-    VkShaderModule pvr_vs, pvr_fs, blit_vs, blit_fs;
+    VkShaderModule pvr_vs, pvr_fs, blit_vs, blit_fs, ext_vs, ext_fs;
+    /* 16:9 background extension (widescreen.c): a background layer drawn alone, and the pipeline that continues
+     * it past its art's edge */
+    VkPipelineLayout ext_layout;
+    VkPipeline ext_pipeline;
+
+    /* a stage's layers captured alone over their maps (widescreen.c's filler analysis), and its extension fill */
+    Image atlas_img[ATLAS_LAYERS], atlas_depth;
+    VkBuffer atlas_buf;
+    VkDeviceMemory atlas_mem;
+    void *atlas_map;
+    Image mask_img, fill_img;  /* the 16:9 extension's fill (widescreen.c): modes and palettes (point-sampled), colours */
+    /* each layer's palettes as captured: the fill takes each texel's from the art it continues, and follows their
+     * colours (a stage's palette animation: flames, lights, signs; ext.frag) */
+    struct {
+        int n;
+        uint32_t base[CAP_PALS], count[CAP_PALS];
+        float hist[CAP_PALS][256], mean[CAP_PALS][3];
+    } cap_pal[ATLAS_LAYERS];
+    uint8_t cap_palmap[ATLAS_LAYERS][ATLAS_W * ATLAS_ROWS];  /* each capture texel's palette: cap_pal's + 1, 0 none */
+    float pal_table[ATLAS_LAYERS * 2][CAP_PALS][4];          /* their colour now against the capture's: times, plus */
+    uint32_t pal_ram[1024];                                  /* the palette RAM the table was worked out from (those entries) */
+    int pal_dirty;
+    Image pal_img;
+    VkDescriptorSet mask_set, fill_set, pal_set;
+    float cap_shade[ATLAS_LAYERS][6];  /* each layer's shading as captured (poly_shading) */
+    uint8_t *mask_pending;     /* a new fill to upload: the colours (RGBA), then the modes */
+    VkQueryPool timestamps;    /* 2 a frame: the game's render's start and end on the GPU (perf log) */
+    float ts_period;           /* ns per timestamp tick */
     VkSampler samplers[18];
     VkSampler blit_sampler;
     Frame frames[FRAMES];
@@ -125,17 +170,20 @@ static struct {
     Texture tex[MAX_TEX];
     Image white;
     VkDescriptorSet white_set;
-    uint32_t scale;
+    uint32_t height;          /* the render targets' height in pixels (the RENDER RES setting) */
     uint64_t frame_no;
     uint32_t page_gen[VRAM_PAGES];
     uint32_t gen_counter;
-    uint32_t rt_w;            /* the render targets' width in guest pixels: 640, wider with widescreen (widescreen.c) */
+    float pic_w;              /* the picture's width in guest pixels: 640, wider with widescreen (widescreen.c) */
     int shot_every;
     int sc_can_read;          /* swapchain images can be copied out (presented screenshots) */
     uint64_t frame_ns;        /* vsync at ~60 Hz: frame period of the display, else 0 */
     uint64_t shot_from;
     uint32_t *decode_buf;
 } R;
+
+/* the render targets' width in pixels: the picture's shape at the RENDER RES height (16:9 at 2160: 3840) */
+static uint32_t rt_width(void) { return (uint32_t)(R.pic_w * (float)R.height / 480.0f + 0.5f); }
 
 /* ---------------- helpers ---------------- */
 
@@ -147,16 +195,28 @@ static uint32_t find_mem(uint32_t bits, VkMemoryPropertyFlags props) {
     fatal("no suitable Vulkan memory type");
 }
 
+/* a host-visible buffer, mapped; one the GPU only writes (TRANSFER_DST: read back by the CPU, the layer captures and
+ * screenshots) in cached memory where there is some: the CPU reads uncached memory a transfer at a time (a layer
+ * capture took 0.1 s to read) */
 static void make_buffer(VkDeviceSize size, VkBufferUsageFlags usage, VkBuffer *buf, VkDeviceMemory *mem,
                         void **map) {
     VkBufferCreateInfo bi = {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = size, .usage = usage};
     VKCHECK(vkCreateBuffer(R.dev, &bi, NULL, buf));
     VkMemoryRequirements mr;
     vkGetBufferMemoryRequirements(R.dev, *buf, &mr);
+    VkMemoryPropertyFlags want = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    uint32_t type = UINT32_MAX;
+    if (usage == VK_BUFFER_USAGE_TRANSFER_DST_BIT) {
+        VkPhysicalDeviceMemoryProperties mp;
+        vkGetPhysicalDeviceMemoryProperties(R.phys, &mp);
+        for (uint32_t i = 0; i < mp.memoryTypeCount && type == UINT32_MAX; i++)
+            if ((mr.memoryTypeBits & (1u << i)) &&
+                (mp.memoryTypes[i].propertyFlags & (want | VK_MEMORY_PROPERTY_HOST_CACHED_BIT)) ==
+                    (want | VK_MEMORY_PROPERTY_HOST_CACHED_BIT))
+                type = i;
+    }
     VkMemoryAllocateInfo ai = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, .allocationSize = mr.size,
-                               .memoryTypeIndex = find_mem(mr.memoryTypeBits,
-                                                           VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                                                               VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)};
+                               .memoryTypeIndex = type != UINT32_MAX ? type : find_mem(mr.memoryTypeBits, want)};
     VKCHECK(vkAllocateMemory(R.dev, &ai, NULL, mem));
     VKCHECK(vkBindBufferMemory(R.dev, *buf, *mem, 0));
     VKCHECK(vkMapMemory(R.dev, *mem, 0, size, 0, map));
@@ -430,6 +490,52 @@ static VkPipeline pvr_pipeline(int blend, int src, int dst) {
     return *slot;
 }
 
+/* 16:9 background extension: a quad over the picture's columns a background layer lacks art in, its fill from the
+ * stage's precomputed images (ext.frag) at a depth just behind or just over the layer's: it writes depth, so that
+ * nearer layers cover it and it covers farther ones */
+static void create_ext_pipeline(void) {
+    VkPushConstantRange pr = {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, 80};
+    VkDescriptorSetLayout sl[3] = {R.set_layout, R.set_layout, R.set_layout};  /* the fill's colours, its modes, palettes */
+    VkPipelineLayoutCreateInfo plci = {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, .setLayoutCount = 3,
+                                       .pSetLayouts = sl, .pushConstantRangeCount = 1,
+                                       .pPushConstantRanges = &pr};
+    VKCHECK(vkCreatePipelineLayout(R.dev, &plci, NULL, &R.ext_layout));
+    VkPipelineShaderStageCreateInfo stages[2] = {
+        {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, .stage = VK_SHADER_STAGE_VERTEX_BIT,
+         .module = R.ext_vs, .pName = "main"},
+        {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
+         .module = R.ext_fs, .pName = "main"}};
+    VkPipelineVertexInputStateCreateInfo vi = {VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+    VkPipelineInputAssemblyStateCreateInfo ia = {VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+                                                 .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP};
+    VkPipelineViewportStateCreateInfo vp = {VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+                                            .viewportCount = 1, .scissorCount = 1};
+    VkPipelineRasterizationStateCreateInfo rs = {VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+                                                 .polygonMode = VK_POLYGON_MODE_FILL, .lineWidth = 1.0f};
+    VkPipelineMultisampleStateCreateInfo ms = {VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+                                               .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT};
+    VkPipelineDepthStencilStateCreateInfo ds = {VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+                                                .depthTestEnable = VK_TRUE, .depthWriteEnable = VK_TRUE,
+                                                .depthCompareOp = VK_COMPARE_OP_GREATER_OR_EQUAL};
+    VkPipelineColorBlendAttachmentState cb = {.colorWriteMask = 0xF};
+    VkPipelineColorBlendStateCreateInfo cbs = {VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+                                               .attachmentCount = 1, .pAttachments = &cb};
+    VkDynamicState dyn[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    VkPipelineDynamicStateCreateInfo dy = {VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+                                           .dynamicStateCount = 2, .pDynamicStates = dyn};
+    VkFormat color_fmt = VK_FORMAT_R8G8B8A8_UNORM;
+    VkPipelineRenderingCreateInfo ri = {VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
+                                        .colorAttachmentCount = 1, .pColorAttachmentFormats = &color_fmt,
+                                        .depthAttachmentFormat = VK_FORMAT_D32_SFLOAT};
+    VkGraphicsPipelineCreateInfo pi = {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+                                       .pNext = &ri, .stageCount = 2, .pStages = stages,
+                                       .pVertexInputState = &vi, .pInputAssemblyState = &ia,
+                                       .pViewportState = &vp, .pRasterizationState = &rs,
+                                       .pMultisampleState = &ms, .pDepthStencilState = &ds,
+                                       .pColorBlendState = &cbs, .pDynamicState = &dy, .layout = R.ext_layout};
+    VKCHECK(vkCreateGraphicsPipelines(R.dev, VK_NULL_HANDLE, 1, &pi, NULL, &R.ext_pipeline));
+}
+
 static void create_blit_pipeline(int blend, VkPipeline *out) {
     VkPipelineShaderStageCreateInfo stages[2] = {
         {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, .stage = VK_SHADER_STAGE_VERTEX_BIT,
@@ -505,9 +611,9 @@ static void alloc_vbuf(Frame *f) {
 
 int renderer_init(void *window) {
     R.window = window;
-    R.scale = (uint32_t)g_settings.scale;
-    if (R.scale < 1 || R.scale > 8) R.scale = 3;
-    R.rt_w = 640;
+    R.height = (uint32_t)g_settings.render_height;
+    if (R.height < 240 || R.height > 4320) R.height = 1440;
+    R.pic_w = 640;
     const char *shot = getenv("SFA3_SHOT_EVERY");
     R.shot_every = shot ? atoi(shot) : 0;
     const char *shot_from = getenv("SFA3_SHOT_FROM");
@@ -542,7 +648,7 @@ int renderer_init(void *window) {
     if (!R.phys) fatal("no Vulkan device with graphics + present");
     VkPhysicalDeviceProperties props;
     vkGetPhysicalDeviceProperties(R.phys, &props);
-    logf_("vulkan: %s, internal resolution %ux%u", props.deviceName, 640 * R.scale, 480 * R.scale);
+    logf_("vulkan: %s, internal resolution %ux%u", props.deviceName, rt_width(), R.height);
 
     float prio = 1.0f;
     VkDeviceQueueCreateInfo qci = {VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO, .queueFamilyIndex = R.qfam,
@@ -585,7 +691,18 @@ int renderer_init(void *window) {
     R.pvr_fs = shader(pvr_frag_spv, sizeof pvr_frag_spv);
     R.blit_vs = shader(blit_vert_spv, sizeof blit_vert_spv);
     R.blit_fs = shader(blit_frag_spv, sizeof blit_frag_spv);
+    R.ext_vs = shader(ext_vert_spv, sizeof ext_vert_spv);
+    R.ext_fs = shader(ext_frag_spv, sizeof ext_frag_spv);
     create_samplers();
+    create_ext_pipeline();
+    {
+        VkQueryPoolCreateInfo qi = {VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO, .queryType = VK_QUERY_TYPE_TIMESTAMP,
+                                    .queryCount = FRAMES * 2};
+        VkPhysicalDeviceProperties pp;
+        vkGetPhysicalDeviceProperties(R.phys, &pp);
+        R.ts_period = pp.limits.timestampPeriod;
+        if (pp.limits.timestampComputeAndGraphics) vkCreateQueryPool(R.dev, &qi, NULL, &R.timestamps);
+    }
     create_swapchain();
     create_blit_pipeline(0, &R.blit_pipeline);
     create_blit_pipeline(1, &R.overlay_pipeline);
@@ -616,6 +733,24 @@ static Frame *frame_begin(void) {
     vkWaitForFences(R.dev, 1, &f->fence, VK_TRUE, UINT64_MAX);
     g_perf.gpu_wait_ns += SDL_GetTicksNS() - t0;
     vkResetFences(R.dev, 1, &f->fence);
+    if (f->timed) {  /* the GPU's time on the game's render in this frame */
+        uint64_t ts[2];
+        if (vkGetQueryPoolResults(R.dev, R.timestamps, (uint32_t)(f - R.frames) * 2, 2, sizeof ts, ts, sizeof ts[0],
+                                  VK_QUERY_RESULT_64_BIT) == VK_SUCCESS && ts[1] > ts[0]) {
+            g_perf.gpu_ns += (uint64_t)((double)(ts[1] - ts[0]) * R.ts_period);
+            g_perf.gpu_frames++;
+        }
+        f->timed = 0;
+    }
+    if (f->atlas_layers) {  /* layer captures this frame made, done now (widescreen.c) */
+        void widescreen_atlas_ready(int layers, const uint8_t *rgba, const uint8_t *pal, int w, int h);
+        uint64_t t0 = SDL_GetTicksNS();
+        widescreen_atlas_ready(f->atlas_layers, R.atlas_map, &R.cap_palmap[0][0], ATLAS_W, ATLAS_H);
+        g_perf.wide_ns += SDL_GetTicksNS() - t0;
+        for (int k = 0; k < ATLAS_LAYERS; k++)
+            if (f->atlas_layers & (1 << k)) g_perf.upload_bytes += (uint64_t)ATLAS_W * ATLAS_H * 4;
+        f->atlas_layers = 0;
+    }
     vkResetCommandBuffer(f->cmd, 0);
     VkCommandBufferBeginInfo bi = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
                                    .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
@@ -649,15 +784,15 @@ uint64_t renderer_frame_ns(void) { return R.frame_ns; }
 /* Settings that need GPU objects recreated (vsync: swapchain; render scale:
  * render targets). Applied between frames. */
 static int s_rt_rebuild;
-static int s_margin_wanted;  /* widescreen: the margin the window asks for (units) */
+static int s_margin_wanted;  /* widescreen: the picture's margin wanted (units; PICTURE 16:9) */
 int widescreen_margin(void);
 float widescreen_margin_px(void);
-int widescreen_wanted(float aspect);
+int widescreen_wanted(void);
 void widescreen_set(int units);
-int widescreen_stage_frame(float *bar_l, float *bar_r, float *view);
+#include "widescreen.h"
 void renderer_settings_changed(void) {
     R.sc_dirty = 1;
-    if ((uint32_t)g_settings.scale != R.scale) s_rt_rebuild = 1;
+    if ((uint32_t)g_settings.render_height != R.height) s_rt_rebuild = 1;
 }
 
 static void rebuild_render_targets(void) {
@@ -669,11 +804,11 @@ static void rebuild_render_targets(void) {
         destroy_image(&rt->depth);
         memset(rt, 0, sizeof *rt);
     }
-    R.scale = (uint32_t)g_settings.scale;
+    R.height = (uint32_t)g_settings.render_height;
     widescreen_set(s_margin_wanted);
-    R.rt_w = 640 + 2 * (uint32_t)(widescreen_margin_px() + 0.5f);
+    R.pic_w = 640.0f + 2.0f * widescreen_margin_px();
     s_rt_rebuild = 0;
-    logf_("render resolution now %ux%u", R.rt_w * R.scale, 480 * R.scale);
+    logf_("render resolution now %ux%u", rt_width(), R.height);
 }
 
 static RenderTarget *get_rt(Frame *f, uint32_t fb_addr) {
@@ -684,7 +819,7 @@ static RenderTarget *get_rt(Frame *f, uint32_t fb_addr) {
         for (int i = 0; i < MAX_RT; i++)
             if (!best || R.rts[i].last_used < best->last_used) best = &R.rts[i];
         if (!best->color.image) {
-            uint32_t w = R.rt_w * R.scale, h = 480 * R.scale;
+            uint32_t w = rt_width(), h = R.height;
             make_image(w, h, VK_FORMAT_R8G8B8A8_UNORM,
                        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
                            VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
@@ -809,7 +944,6 @@ static Texture *get_texture(Frame *f, uint32_t tcw, uint32_t tsp) {
         if (t->valid && t->last_used == R.frame_no) return NULL;  /* cache full this frame */
         destroy_image(&t->img);
         for (int s = 0; s < 18; s++) free_set(&t->sets[s]);
-        free(t->opaque);
         memset(t, 0, sizeof *t);
         t->key = key;
         t->valid = 1;
@@ -833,12 +967,6 @@ static Texture *get_texture(Frame *f, uint32_t tcw, uint32_t tsp) {
         /* decode in ordinary memory: the staging buffer is write-combined
          * (the decoder reads back what it wrote, which is slow there) */
         pvr_tex_decode(&key, R.decode_buf);
-        if (!t->opaque) t->opaque = malloc(((size_t)key.w * key.h + 7) / 8);
-        if (t->opaque) {
-            memset(t->opaque, 0, ((size_t)key.w * key.h + 7) / 8);
-            for (uint32_t k = 0; k < key.w * key.h; k++)
-                if ((R.decode_buf[k] >> 24) >= 128) t->opaque[k >> 3] |= (uint8_t)(1u << (k & 7));
-        }
         g_perf.tex_ns += SDL_GetTicksNS() - t0;
         g_perf.tex_decodes++;
         upload_pixels(f, t, key.w, key.h, R.decode_buf);
@@ -863,14 +991,16 @@ static void write_png(const char *path, const uint8_t *rgba, uint32_t w, uint32_
 const uint32_t *pvr_palette(void);
 
 /* SFA3_DUMP_RENDER=N logs every polygon of the Nth render (debug aid). */
-static long s_dump_target = -2, s_dump_count;
-void renderer_dump_next(void) { s_dump_target = s_dump_count; }  /* the "dumprender" control command */
+static long s_dump_target = -2, s_dump_count, s_dump_n = 1;
+/* the "dumprender [n]" control command: the next n renders */
+void renderer_dump_next(int n) { s_dump_target = s_dump_count, s_dump_n = n > 0 ? n : 1; }
 static void dump_render(const PvrFrame *pf) {
     long target;
     if (s_dump_target == -2) { const char *e = getenv("SFA3_DUMP_RENDER"); s_dump_target = e ? atol(e) : -1; }
     target = s_dump_target;
-    if (s_dump_count++ != target) return;
-    logf_("dump render %ld: %u polys", target, pf->npolys);
+    long at = s_dump_count++;
+    if (target < 0 || at < target || at >= target + s_dump_n) return;
+    logf_("dump render %ld: %u polys", at, pf->npolys);
     for (uint32_t i = 0; i < pf->npolys; i++) {
         const PvrPoly *p = &pf->polys[i];
         float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
@@ -882,7 +1012,11 @@ static void dump_render(const PvrFrame *pf) {
             if (v->u < u0) u0 = v->u; if (v->u > u1) u1 = v->u;
             if (v->v < v0) v0 = v->v; if (v->v > v1) v1 = v->v;
         }
-        if (SPRITE_SWAP_IS_TCW(p->tcw)) continue;
+        if (SPRITE_SWAP_IS_TCW(p->tcw)) {  /* a sprite drawn from its swapped textures: where only */
+            logf_("  #%u list=%d sprite tcw=%08X box=(%.1f,%.1f)-(%.1f,%.1f) uv=(%.3f,%.3f)-(%.3f,%.3f)", i, p->list,
+                  p->tcw, x0, y0, x1, y1, u0, v0, u1, v1);
+            continue;
+        }
         TexKey key;
         pvr_tex_info(p->tcw, p->tsp, &key);
         int seen = 0;
@@ -916,86 +1050,143 @@ static void dump_render(const PvrFrame *pf) {
     }
 }
 
-/* Widescreen: a layer's unpainted parts (empty tiles in its map) that nearer layers cover in the 4:3 game
- * needn't be covered in the margins, where the layers line up as the 4:3 game never has them (they move at
- * different rates). Where nothing in a margin covers the picture (the clear colour would show), the bar
- * reaches over it: from the hole out, on every row whose 4:3 view's edge is itself covered (a stage that
- * shows the clear colour there means it). Covering: an opaque textured polygon, or a translucent one blended
- * by its alpha (or not at all) where its texel is opaque (sampled through the polygon's first triangle's
- * mapping: sprites and tiles are parallelograms). Picture pixels (vertex x + xoff); rows every 4 pixels.
- * The bars shrink by at most 2 pixels a frame, so that a fighter passing over a hole doesn't make them
- * flicker. */
-#define HOLE_ROWS 112
-#define HOLE_COLS 1280
-static float s_hole_l, s_hole_r;
-
-static int texel_opaque(const Texture *t, const PvrPoly *p, const PvrVertex *v, float x, float y) {
-    const PvrVertex *a = &v[p->first_vertex], *b = a + 1, *c = a + 2;
-    float bx = b->x - a->x, by = b->y - a->y, cx = c->x - a->x, cy = c->y - a->y, det = bx * cy - by * cx;
-    if (det > -1e-6f && det < 1e-6f) return 1;
-    float px = x - a->x, py = y - a->y, s = (px * cy - py * cx) / det, r = (bx * py - by * px) / det;
-    float u = a->u + s * (b->u - a->u) + r * (c->u - a->u), w = a->v + s * (b->v - a->v) + r * (c->v - a->v);
-    int tx = (int)floorf(u * (float)t->key.w), ty = (int)floorf(w * (float)t->key.h);
-    tx = ((tx % (int)t->key.w) + (int)t->key.w) % (int)t->key.w;
-    ty = ((ty % (int)t->key.h) + (int)t->key.h) % (int)t->key.h;
-    uint32_t k = (uint32_t)ty * t->key.w + (uint32_t)tx;
-    return (t->opaque[k >> 3] >> (k & 7)) & 1;
-}
-
-static void hole_bars(const PvrFrame *pf, const PvrVertex *vv, Texture *const *texs, float xoff, float view,
-                      float *bar_l, float *bar_r) {
-    static uint8_t cov[HOLE_ROWS][HOLE_COLS];
-    int w = (int)(640 + 2 * xoff + 0.5f);
-    if (w > HOLE_COLS) w = HOLE_COLS;
-    int vl = (int)(view + xoff + 0.5f);  /* the 4:3 view: columns vl to vr - 1 */
-    vl = vl < 1 ? 1 : vl > w - 642 ? w - 642 : vl;
-    int vr = vl + 640;
-    memset(cov, 0, sizeof cov);
-    for (uint32_t i = 0; i < pf->npolys; i++) {
-        const PvrPoly *p = &pf->polys[i];
-        const Texture *t = texs[i];
-        if (!t || p->vertex_count < 3 || (p->list != 0 && p->list != 2)) continue;
-        uint32_t src = p->tsp >> 29, dst = (p->tsp >> 26) & 7;
-        int keyed = p->list == 2;  /* translucent: by its texels' alpha */
-        if (keyed && !((src == 4 && dst == 5) || (src == 1 && dst == 0))) continue;
-        if (keyed && src == 1) keyed = 0;
-        if (keyed && !t->opaque) continue;
-        float x0 = 1e9f, x1 = -1e9f, y0 = 1e9f, y1 = -1e9f;
-        for (uint32_t k = 0; k < p->vertex_count; k++) {
-            const PvrVertex *v = &vv[p->first_vertex + k];
-            x0 = v->x < x0 ? v->x : x0, x1 = v->x > x1 ? v->x : x1;
-            y0 = v->y < y0 ? v->y : y0, y1 = v->y > y1 ? v->y : y1;
-        }
-        int c0 = (int)(x0 + xoff + 0.5f), c1 = (int)(x1 + xoff + 0.5f);  /* columns whose centres it covers */
-        int r0 = (int)((y0 - 10) / 4 + 0.999f), r1 = (int)((y1 - 10) / 4 + 0.999f);  /* rows' centres: 10 + 4r */
-        c0 = c0 < 0 ? 0 : c0, c1 = c1 > w ? w : c1, r0 = r0 < 0 ? 0 : r0, r1 = r1 > HOLE_ROWS ? HOLE_ROWS : r1;
-        if (c1 <= c0 || r1 <= r0 || (c0 > vl && c1 < vr)) continue;
-        for (int r = r0; r < r1; r++) {
-            float y = 10.0f + 4.0f * (float)r;
-            for (int side = 0; side < 2; side++) {
-                int a = side ? (c0 > vr - 1 ? c0 : vr - 1) : c0, b = side ? c1 : (c1 < vl + 1 ? c1 : vl + 1);
-                for (int c = a; c < b; c++)
-                    if (!cov[r][c] && (!keyed || texel_opaque(t, p, vv, (float)c + 0.5f - xoff, y))) cov[r][c] = 1;
+/* the frame's polygons, in the PowerVR's order: opaque, punch-through (submission order), translucent (tr_order);
+ * zonly > 0: only those at that depth (one background layer: widescreen's extension) */
+static void draw_polys(VkCommandBuffer cmd, const PvrFrame *pf, const VkDescriptorSet *sets, const uint32_t *tr_order,
+                       uint32_t ntr, int autosort, PvrPush push, VkRect2D full, float xoff, float gw, float gh,
+                       uint32_t W, uint32_t H, float zonly, const int8_t *atlas, int atlas_layer) {
+    static const int order[3] = {LIST_OPAQUE, LIST_PUNCH, LIST_TRANS};
+    VkPipeline cur_pipe = VK_NULL_HANDLE;
+    VkDescriptorSet cur_set = VK_NULL_HANDLE;
+    int cur_cull = -1, cur_zop = -1, cur_zw = -1;
+    for (int pass = 0; pass < 3; pass++) {
+        int list = order[pass];
+        uint32_t count = list == LIST_TRANS ? ntr : pf->npolys;
+        for (uint32_t j = 0; j < count; j++) {
+            uint32_t i = list == LIST_TRANS ? tr_order[j] : j;
+            const PvrPoly *p = &pf->polys[i];
+            if ((int)p->list != list || p->vertex_count < 3) continue;
+            if (atlas && atlas[i] != atlas_layer) continue;  /* a layer capture's (widescreen.c) or not */
+            if (zonly > 0) {
+                float z = pf->verts[p->first_vertex].z;
+                if (z < zonly * 0.999f || z > zonly * 1.001f) continue;
+            }
+            uint32_t isp = p->isp, tsp = p->tsp;
+            int blend = list == LIST_TRANS;
+            int src = blend ? (tsp >> 29) & 7 : 1, dst = blend ? (tsp >> 26) & 7 : 0;
+            VkPipeline pipe = pvr_pipeline(blend, src, dst);
+            if (pipe != cur_pipe) {
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
+                cur_pipe = pipe;
+                cur_set = VK_NULL_HANDLE;
+            }
+            if (sets[i] != cur_set) {
+                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, R.pvr_layout, 0, 1, &sets[i], 0, NULL);
+                cur_set = sets[i];
+            }
+            int zop = (int)(isp >> 29) & 7;
+            int zwrite = !((isp >> 26) & 1);
+            if (list == LIST_TRANS) {
+                zwrite = 0;
+                if (autosort) zop = 6;  /* autosort forces GREATER_EQUAL */
+            }
+            if (zop != cur_zop) { vkCmdSetDepthCompareOp(cmd, s_depth_op[zop]); cur_zop = zop; }
+            if (zwrite != cur_zw) { vkCmdSetDepthWriteEnable(cmd, (VkBool32)zwrite); cur_zw = zwrite; }
+            if (cur_cull < 0) { vkCmdSetDepthTestEnable(cmd, VK_TRUE); }
+            int cull = (isp >> 27) & 3;
+            if (cull != cur_cull) {
+                vkCmdSetCullMode(cmd, cull == 2 ? VK_CULL_MODE_BACK_BIT : cull == 3 ? VK_CULL_MODE_FRONT_BIT
+                                                                                  : VK_CULL_MODE_NONE);
+                cur_cull = cull;
+            }
+            uint32_t flags = 0;
+            if (isp & (1u << 25)) flags |= F_TEXTURE;
+            if (isp & (1u << 24)) flags |= F_OFFSET;
+            if (tsp & (1u << 20)) flags |= F_USE_ALPHA;
+            if (tsp & (1u << 19)) flags |= F_IGNORE_TEX_ALPHA;
+            if (list == LIST_PUNCH) flags |= F_ALPHA_TEST;
+            /* a layer capture (widescreen.c) records what the PowerVR shows: an opaque-list texel is opaque */
+            if (atlas_layer >= 0 && list == LIST_OPAQUE) flags |= F_IGNORE_TEX_ALPHA;
+            if (((tsp >> 22) & 3) == 1) flags |= F_FOG_VERTEX;
+            flags |= ((tsp >> 6) & 3) << F_SHADE_SHIFT;
+            push.flags = flags;
+            vkCmdPushConstants(cmd, R.pvr_layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                               sizeof push, &push);
+            /* user tile clip (inside mode) */
+            if (p->tile_clip == 2) {
+                float x0 = (float)(p->clip[0] * 32) + xoff, x1 = (float)((p->clip[2] + 1) * 32) + xoff;
+                int y0 = p->clip[1] * 32, y1 = (p->clip[3] + 1) * 32;
+                float sx = W / (gw + 2 * xoff), sy = H / gh;
+                int32_t sx0 = (int32_t)(x0 * sx), sx1 = (int32_t)(x1 * sx);  /* within the bars */
+                sx0 = sx0 < full.offset.x ? full.offset.x : sx0;
+                sx1 = sx1 > full.offset.x + (int32_t)full.extent.width ? full.offset.x + (int32_t)full.extent.width : sx1;
+                VkRect2D sc = {{sx0, (int32_t)(y0 * sy)}, {(uint32_t)(sx1 > sx0 ? sx1 - sx0 : 0), (uint32_t)((y1 - y0) * sy)}};
+                vkCmdSetScissor(cmd, 0, 1, &sc);
+                vkCmdDraw(cmd, p->vertex_count, 1, p->first_vertex, 0);
+                vkCmdSetScissor(cmd, 0, 1, &full);
+            } else {
+                vkCmdDraw(cmd, p->vertex_count, 1, p->first_vertex, 0);
             }
         }
     }
-    int hl = 0, hr = 0;
-    for (int r = 0; r < HOLE_ROWS; r++) {
-        if (cov[r][vl]) {
-            int c = vl - 1;
-            while (c >= 0 && cov[r][c]) c--;
-            if (c + 1 > hl) hl = c + 1;
-        }
-        if (cov[r][vr - 1]) {
-            int c = vr;
-            while (c < w && cov[r][c]) c++;
-            if (w - c > hr) hr = w - c;
-        }
+}
+
+
+void renderer_filler_masks(const uint8_t *modes, const uint32_t *fill) {
+    size_t n = (size_t)WIDE_MASK_W * WIDE_MASK_ROWS * 3;
+    free(R.mask_pending);
+    R.mask_pending = malloc(n * 6);  /* the colours, then the modes and palettes */
+    if (!R.mask_pending) return;
+    memcpy(R.mask_pending, fill, n * 4);
+    memcpy(R.mask_pending + n * 4, modes, n * 2);
+}
+
+/* a palette's colour, its entries weighted by how much its textures use each (cap_pal): RGB 0-1 */
+static void pal_mean(uint32_t base, uint32_t count, const float *hist, float *out) {
+    double sum[3] = {0, 0, 0}, wsum = 0;
+    for (uint32_t i = 0; i < count; i++) {
+        if (hist[i] <= 0) continue;
+        uint32_t c = pvr_pal_color(base + i);
+        double w = hist[i] * (double)(c >> 24) / 255.0;  /* (transparent entries aren't seen) */
+        for (int k = 0; k < 3; k++) sum[k] += w * (double)((c >> (8 * k)) & 255) / 255.0;
+        wsum += w;
     }
-    s_hole_l = (float)hl > s_hole_l - 2 ? (float)hl : s_hole_l - 2;
-    s_hole_r = (float)hr > s_hole_r - 2 ? (float)hr : s_hole_r - 2;
-    if (s_hole_l > *bar_l) *bar_l = s_hole_l;
-    if (s_hole_r > *bar_r) *bar_r = s_hole_r;
+    for (int k = 0; k < 3; k++) out[k] = wsum > 0 ? (float)(sum[k] / wsum) : 0.0f;
+}
+
+/* a capture's polygon's palette (cap_pal[k]'s + 1, 0 none): each texture's use counted once */
+static int cap_pal_slot(int k, const TexKey *key) {
+    static uint32_t seen[ATLAS_LAYERS][256], nseen[ATLAS_LAYERS];
+    if (!key->paletted) return 0;
+    if (!R.cap_pal[k].n) nseen[k] = 0;
+    int s = 0;
+    while (s < R.cap_pal[k].n && R.cap_pal[k].base[s] != key->pal) s++;
+    if (s == R.cap_pal[k].n) {
+        if (s == CAP_PALS) return 0;
+        R.cap_pal[k].n++;
+        R.cap_pal[k].base[s] = key->pal;
+        R.cap_pal[k].count[s] = ((key->tcw >> 27) & 7) == 5 ? 16 : 256;
+        memset(R.cap_pal[k].hist[s], 0, sizeof R.cap_pal[k].hist[s]);
+    }
+    uint32_t id = key->tcw ^ key->pal * 2654435761u;
+    int counted = 0;
+    for (uint32_t j = 0; j < nseen[k]; j++) counted |= seen[k][j] == id;
+    if (!counted && nseen[k] < 256) {
+        seen[k][nseen[k]++] = id;
+        pvr_tex_pal_hist(key, R.cap_pal[k].hist[s]);
+    }
+    return s + 1;
+}
+
+/* how a polygon shades its texels (pvr.frag): times its colour (modulate), plus its offset colour: rgb x3, rgb x3 */
+static void poly_shading(const PvrFrame *pf, const PvrPoly *p, float out[6]) {
+    const PvrVertex *v = &pf->verts[p->first_vertex];
+    uint32_t shade = (p->tsp >> 6) & 3;
+    for (int c = 0; c < 3; c++) {
+        out[c] = (p->isp & (1u << 25)) && (shade == 1 || shade == 3) ? (float)((v->base >> (16 - 8 * c)) & 255) / 255.0f
+                                                                     : 1.0f;
+        out[3 + c] = p->isp & (1u << 24) ? (float)((v->offset >> (16 - 8 * c)) & 255) / 255.0f : 0.0f;
+    }
 }
 
 void renderer_draw(const PvrFrame *pf) {
@@ -1004,8 +1195,8 @@ void renderer_draw(const PvrFrame *pf) {
     Frame *f = frame_begin();
     R.frame_no++;
     RenderTarget *rt = get_rt(f, pf->fb_w_sof1 & 0x7FFFFF);
-    uint32_t W = R.rt_w * R.scale, H = 480 * R.scale;
-    float xoff = (float)(R.rt_w - 640) / 2;  /* the 640 in the middle of a wide picture */
+    uint32_t W = rt_width(), H = R.height;
+    float xoff = (R.pic_w - 640) / 2;  /* the 640 in the middle of a wide picture */
 
     /* guest framebuffer size from the clip registers */
     float gw = (float)((pf->fb_x_clip >> 16) & 0x7FF) + 1, gh = (float)((pf->fb_y_clip >> 16) & 0x3FF) + 1;
@@ -1019,22 +1210,38 @@ void renderer_draw(const PvrFrame *pf) {
 
     /* resolve textures before the rendering scope (uploads are transfer ops) */
     static VkDescriptorSet *sets;
-    static Texture **texs;  /* each polygon's texture (NULL: none) */
+    static int8_t *atlas;  /* each polygon: a layer capture's (widescreen.c: its layer) or -1 */
     static uint32_t sets_cap;
     if (sets_cap < pf->npolys) {
         sets_cap = pf->npolys * 2;
         sets = realloc(sets, sets_cap * sizeof *sets);
-        texs = realloc(texs, sets_cap * sizeof *texs);
+        atlas = realloc(atlas, sets_cap);
     }
+    int atlas_layers = 0;
     for (uint32_t i = 0; i < pf->npolys; i++) {
         const PvrPoly *p = &pf->polys[i];
+        atlas[i] = -1;
+        if (p->vertex_count && pf->verts[p->first_vertex].x >= ATLAS_X - 512) {
+            float x0 = 1e9f;
+            for (uint32_t k = 0; k < p->vertex_count; k++)
+                x0 = pf->verts[p->first_vertex + k].x < x0 ? pf->verts[p->first_vertex + k].x : x0;
+            int slot = (int)((x0 - ATLAS_X + 256) / ATLAS_SLOT);
+            if (slot >= 0 && slot < ATLAS_LAYERS * 3) {
+                int k = slot / 3;
+                if (!(atlas_layers & (1 << k))) {  /* as captured (widescreen.c) */
+                    poly_shading(pf, p, R.cap_shade[k]);
+                    R.cap_pal[k].n = 0;
+                    memset(R.cap_palmap[k], 0, sizeof R.cap_palmap[k]);
+                }
+                atlas[i] = (int8_t)k, atlas_layers |= 1 << k;
+            }
+        }
         sets[i] = R.white_set;
-        texs[i] = NULL;
         if (!(p->isp & (1u << 25)) || !p->vertex_count) continue;
         Texture *t = get_texture(f, p->tcw, p->tsp);
         if (!t) continue;
-        texs[i] = t;
         int si = sampler_index(p->tsp);
+        if (atlas[i] >= 0) si %= 9;  /* point-sampled: no blends for the analysis */
         if (!t->sets[si]) t->sets[si] = alloc_set(t->img.view, R.samplers[si]);
         sets[i] = t->sets[si];
     }
@@ -1042,17 +1249,53 @@ void renderer_draw(const PvrFrame *pf) {
     VkDeviceSize vbytes = pf->nverts * sizeof(PvrVertex);
     if (f->vused + vbytes > f->vcap) return;  /* overflow: skip this render */
     memcpy((uint8_t *)f->vmap + f->vused, pf->verts, vbytes);
-    float bar_l, bar_r, view;  /* widescreen: black at the picture's sides, past a stage layer's art (widescreen.c) */
-    int wide_fight = widescreen_stage_frame(&bar_l, &bar_r, &view) && xoff > 0;
+    float stage_bar;  /* widescreen: the picture's sides a stage's art doesn't reach (widescreen.c) */
+    int wide_fight = widescreen_stage_frame(pf->wide_list, &stage_bar) && xoff > 0;  /* a fight's frame, drawn wide */
+    if (!widescreen_list_captures(pf->wide_list)) atlas_layers = 0;  /* (only where widescreen.c asked for them) */
+    if (wide_fight || atlas_layers) {
+        PvrVertex *vv = (PvrVertex *)((uint8_t *)f->vmap + f->vused);
+        for (uint32_t i = 0; i < pf->npolys; i++) {  /* the left margin's stage, laid out 4096 to the right */
+            const PvrPoly *p = &pf->polys[i];
+            float x0 = 1e9f;
+            for (uint32_t k = 0; k < p->vertex_count; k++) x0 = vv[p->first_vertex + k].x < x0 ? vv[p->first_vertex + k].x : x0;
+            if (atlas[i] >= 0) {  /* a layer capture: its segment's place in the capture (guest pixels) */
+                int slot = (int)((x0 - ATLAS_X + 256) / ATLAS_SLOT);
+                float dx = -(ATLAS_X + (float)slot * ATLAS_SLOT) + (float)(slot % 3) * 640.0f;
+                for (uint32_t k = 0; k < p->vertex_count; k++) vv[p->first_vertex + k].x += dx;
+                if (p->isp & (1u << 25)) {  /* its palette over its texels (a tile: its bounding box) */
+                    TexKey key;
+                    pvr_tex_info(p->tcw, p->tsp, &key);
+                    int ps = cap_pal_slot(atlas[i], &key);
+                    float bx0 = 1e9f, bx1 = -1e9f, by0 = 1e9f, by1 = -1e9f;
+                    for (uint32_t k = 0; k < p->vertex_count; k++) {
+                        const PvrVertex *v = &vv[p->first_vertex + k];
+                        bx0 = v->x < bx0 ? v->x : bx0, bx1 = v->x > bx1 ? v->x : bx1;
+                        by0 = v->y < by0 ? v->y : by0, by1 = v->y > by1 ? v->y : by1;
+                    }
+                    int u0 = (int)floorf(bx0 * 384.0f / 640.0f + 0.5f), u1 = (int)floorf(bx1 * 384.0f / 640.0f + 0.5f);
+                    int r0 = (int)floorf(by0 / 2.0f + 0.5f), r1 = (int)floorf(by1 / 2.0f + 0.5f);
+                    u0 = u0 < 0 ? 0 : u0, u1 = u1 > ATLAS_W ? ATLAS_W : u1, r0 = r0 < 0 ? 0 : r0, r1 = r1 > ATLAS_ROWS ? ATLAS_ROWS : r1;
+                    for (int r = r0; r < r1; r++) memset(&R.cap_palmap[atlas[i]][r * ATLAS_W + u0], ps, u1 > u0 ? (size_t)(u1 - u0) : 0);
+                }
+            } else if (wide_fight && x0 >= 2048.0f) {
+                for (uint32_t k = 0; k < p->vertex_count; k++) vv[p->first_vertex + k].x -= 4096.0f;
+            }
+        }
+    }
+    for (int k = 0; k < ATLAS_LAYERS; k++)  /* the capture's palettes' colours */
+        if (atlas_layers & (1 << k)) {
+            for (int s = 0; s < R.cap_pal[k].n; s++)
+                pal_mean(R.cap_pal[k].base[s], R.cap_pal[k].count[s], R.cap_pal[k].hist[s], R.cap_pal[k].mean[s]);
+            R.pal_dirty = 1;
+        }
     if (wide_fight) {
-        /* a wide fight: the untextured shapes' edges at the 4:3 screen's moved to the picture's: the borders at
-         * the top and bottom, flashes and the super moves' dimming as wide as the picture; the game's thin
-         * borders at the sides (0 - 0.1 and 640 - 640.23, laid out with the stage, so the margins' layouts
-         * put more of them about) out of it */
+        /* a wide fight: the untextured shapes as wide as the 4:3 screen (the borders at the top and bottom,
+         * flashes, the super moves' dimming) as wide as the picture; the game's thin borders at the sides (0 - 0.1
+         * and 640 - 640.23, laid out with the stage, so the margins' layouts put more of them about) out of it */
         PvrVertex *vv = (PvrVertex *)((uint8_t *)f->vmap + f->vused);
         for (uint32_t i = 0; i < pf->npolys; i++) {
             const PvrPoly *p = &pf->polys[i];
-            if ((p->isp & (1u << 25)) || p->vertex_count < 3) continue;
+            if ((p->isp & (1u << 25)) || p->vertex_count < 3 || atlas[i] >= 0) continue;
             float x0 = 1e9f, x1 = -1e9f, y0 = 1e9f, y1 = -1e9f;
             for (uint32_t k = 0; k < p->vertex_count; k++) {
                 const PvrVertex *v = &vv[p->first_vertex + k];
@@ -1063,14 +1306,44 @@ void renderer_draw(const PvrFrame *pf) {
                 for (uint32_t k = 0; k < p->vertex_count; k++) vv[p->first_vertex + k].x = -xoff - 8;
                 continue;
             }
+            if (x0 > 0.5f || x1 < gw - 0.5f) continue;  /* only what spans the whole screen: not the HUD's shapes */
             for (uint32_t k = 0; k < p->vertex_count; k++) {
                 PvrVertex *v = &vv[p->first_vertex + k];
                 if (v->x <= 0.5f) v->x = -xoff;
                 else if (v->x >= gw - 0.5f) v->x = gw + xoff;
             }
         }
-        hole_bars(pf, vv, texs, xoff, view, &bar_l, &bar_r);
     }
+    /* 16:9 background extension (widescreen.c, wide_filler.c's wide_extend): each background layer that lacks art in
+     * view gets its precomputed fill drawn under the frame (ext.frag) */
+    uint64_t ext_t0 = SDL_GetTicksNS();
+    WideExt ext[EXT_MAX];
+    int emode = 0;
+    float etint[EXT_MAX][6];  /* the layer's shading now against the capture's (a super darkens it): times, plus */
+    int next = wide_fight && R.fill_set ? widescreen_extensions(pf->wide_list, ext, EXT_MAX, &emode) : 0;
+    for (int k = 0; k < next; k++) {
+        for (int c = 0; c < 6; c++) etint[k][c] = c < 3 ? 1.0f : 0.0f;
+        for (uint32_t i = 0; i < pf->npolys; i++) {
+            const PvrPoly *p = &pf->polys[i];
+            if (!p->vertex_count || atlas[i] >= 0) continue;
+            const PvrVertex *v = &pf->verts[p->first_vertex];
+            if (v->z < ext[k].z * 0.999f || v->z > ext[k].z * 1.001f) continue;
+            /* the fill's colours are the capture's, shaded as it was: now's relative to that */
+            float now[6], *cap = R.cap_shade[ext[k].layer];
+            poly_shading(pf, p, now);
+            for (int c = 0; c < 3; c++) {
+                float mul = cap[c] > 0.05f ? now[c] / cap[c] : 1.0f;
+                etint[k][c] = mul, etint[k][3 + c] = now[3 + c] - cap[3 + c] * mul;
+            }
+            break;
+        }
+    }
+    g_perf.wide_ns += SDL_GetTicksNS() - ext_t0;
+    /* a dumped render (dump_render): its extensions too */
+    if (s_dump_target >= 0 && s_dump_count - 1 >= s_dump_target && s_dump_count - 1 < s_dump_target + s_dump_n)
+        for (int k = 0; k < next; k++)
+            logf_("  ext %d: z %g layer %d cols %.2f..%.2f u0 %.2f v0 %.2f", k, ext[k].z, ext[k].layer, ext[k].q0,
+                  ext[k].q1, ext[k].u0, ext[k].v0);
     VkDeviceSize voff = f->vused;
     f->vused += (vbytes + 255) & ~255ull;
 
@@ -1084,12 +1357,21 @@ void renderer_draw(const PvrFrame *pf) {
             VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT);
     rt->initialized = 1;
 
+    static int magenta = -1;  /* SFA3_CLEAR_MAGENTA: what nothing covers shows magenta (testing widescreen) */
+    static float clear_rgb[3] = {0, 0, 0};
+    if (magenta < 0) {
+        magenta = getenv("SFA3_CLEAR_MAGENTA") != NULL;
+        if (magenta) clear_rgb[0] = clear_rgb[2] = 1;
+        int r, g, b;  /* SFA3_CLEAR_COLOR=r,g,b: any colour (testing) */
+        if (getenv("SFA3_CLEAR_COLOR") && sscanf(getenv("SFA3_CLEAR_COLOR"), "%d,%d,%d", &r, &g, &b) == 3)
+            clear_rgb[0] = r / 255.0f, clear_rgb[1] = g / 255.0f, clear_rgb[2] = b / 255.0f;
+    }
     VkRenderingAttachmentInfo ca = {VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
                                     .imageView = rt->color.view,
                                     .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                                     .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
                                     .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-                                    .clearValue.color = {{0, 0, 0, 1}}};
+                                    .clearValue.color = {{clear_rgb[0], clear_rgb[1], clear_rgb[2], 1}}};
     VkRenderingAttachmentInfo da = {VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
                                     .imageView = rt->depth.view,
                                     .imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
@@ -1099,10 +1381,10 @@ void renderer_draw(const PvrFrame *pf) {
     VkRenderingInfo ri = {VK_STRUCTURE_TYPE_RENDERING_INFO, .renderArea = {{0, 0}, {W, H}}, .layerCount = 1,
                           .colorAttachmentCount = 1, .pColorAttachments = &ca, .pDepthAttachment = &da};
     VkCommandBuffer cmd = f->cmd;
-    vkCmdBeginRendering(cmd, &ri);
     VkViewport vp = {0, 0, (float)W, (float)H, 0, 1};
     vkCmdSetViewport(cmd, 0, 1, &vp);
     VkRect2D full = {{0, 0}, {W, H}};
+    float bar_l = wide_fight ? stage_bar : 0, bar_r = bar_l;
     if (xoff > 0 && !wide_fight) bar_l = bar_r = xoff;  /* a wide picture outside a fight: 4:3, black at the sides
                                                           * (what the game draws past its screen's edges stays out) */
     if (xoff > 0 && (bar_l > 0 || bar_r > 0)) {
@@ -1156,75 +1438,191 @@ void renderer_draw(const PvrFrame *pf) {
         }
     }
 
-    /* draw order: opaque, punch-through (submission order), translucent */
-    static const int order[3] = {LIST_OPAQUE, LIST_PUNCH, LIST_TRANS};
-    VkPipeline cur_pipe = VK_NULL_HANDLE;
-    VkDescriptorSet cur_set = VK_NULL_HANDLE;
-    int cur_cull = -1, cur_zop = -1, cur_zw = -1;
-    for (int pass = 0; pass < 3; pass++) {
-        int list = order[pass];
-        uint32_t count = list == LIST_TRANS ? ntr : pf->npolys;
-        for (uint32_t j = 0; j < count; j++) {
-            uint32_t i = list == LIST_TRANS ? tr_order[j] : j;
-            const PvrPoly *p = &pf->polys[i];
-            if ((int)p->list != list || p->vertex_count < 3) continue;
-            uint32_t isp = p->isp, tsp = p->tsp;
-            int blend = list == LIST_TRANS;
-            int src = blend ? (tsp >> 29) & 7 : 1, dst = blend ? (tsp >> 26) & 7 : 0;
-            VkPipeline pipe = pvr_pipeline(blend, src, dst);
-            if (pipe != cur_pipe) {
-                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
-                cur_pipe = pipe;
-                cur_set = VK_NULL_HANDLE;
+    int fidx = (int)(f - R.frames);
+    if (R.timestamps && !f->timed) {
+        vkCmdResetQueryPool(cmd, R.timestamps, (uint32_t)fidx * 2, 2);
+        vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, R.timestamps, (uint32_t)fidx * 2);
+    }
+    g_perf.ext_passes += (uint64_t)next;
+    /* a stage's new extension fill (widescreen.c) into its images: the colours (bilinear) and the modes */
+    if (R.mask_pending) {
+        VkDeviceSize n = (VkDeviceSize)WIDE_MASK_W * WIDE_MASK_ROWS * 3;
+        if (!R.mask_img.image) {
+            make_image(WIDE_MASK_W, WIDE_MASK_ROWS * 3, VK_FORMAT_R8G8B8A8_UNORM,
+                       VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_ASPECT_COLOR_BIT,
+                       &R.fill_img);
+            make_image(WIDE_MASK_W, WIDE_MASK_ROWS * 3, VK_FORMAT_R8G8_UNORM,
+                       VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_ASPECT_COLOR_BIT,
+                       &R.mask_img);
+            make_image(CAP_PALS, ATLAS_LAYERS * 2, VK_FORMAT_R32G32B32A32_SFLOAT,
+                       VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_ASPECT_COLOR_BIT,
+                       &R.pal_img);
+            R.mask_set = alloc_set(R.mask_img.view, R.samplers[8]);  /* point-sampled, clamped */
+            R.pal_set = alloc_set(R.pal_img.view, R.samplers[8]);
+            R.pal_dirty = 1;
+            for (int i = 0; i < 3; i++)
+                barrier(cmd, i == 2 ? R.pal_img.image : i ? R.mask_img.image : R.fill_img.image, VK_IMAGE_ASPECT_COLOR_BIT,
+                        VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_NONE,
+                        0, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+        }
+        if (f->sused + n * 6 + 256 <= f->scap) {
+            memcpy((uint8_t *)f->smap + f->sused, R.mask_pending, n * 6);
+            g_perf.upload_bytes += n * 6;
+            for (int i = 0; i < 2; i++) {
+                VkImage img = i ? R.mask_img.image : R.fill_img.image;
+                barrier(cmd, img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, 0,
+                        VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+                VkBufferImageCopy c = {.bufferOffset = f->sused + (i ? n * 4 : 0),
+                                       .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+                                       .imageExtent = {WIDE_MASK_W, WIDE_MASK_ROWS * 3, 1}};
+                vkCmdCopyBufferToImage(cmd, f->sbuf, img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &c);
+                barrier(cmd, img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_COPY_BIT,
+                        VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                        VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
             }
-            if (sets[i] != cur_set) {
-                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, R.pvr_layout, 0, 1, &sets[i], 0, NULL);
-                cur_set = sets[i];
-            }
-            int zop = (int)(isp >> 29) & 7;
-            int zwrite = !((isp >> 26) & 1);
-            if (list == LIST_TRANS) {
-                zwrite = 0;
-                if (autosort) zop = 6;  /* autosort forces GREATER_EQUAL */
-            }
-            if (zop != cur_zop) { vkCmdSetDepthCompareOp(cmd, s_depth_op[zop]); cur_zop = zop; }
-            if (zwrite != cur_zw) { vkCmdSetDepthWriteEnable(cmd, (VkBool32)zwrite); cur_zw = zwrite; }
-            if (cur_cull < 0) { vkCmdSetDepthTestEnable(cmd, VK_TRUE); }
-            int cull = (isp >> 27) & 3;
-            if (cull != cur_cull) {
-                vkCmdSetCullMode(cmd, cull == 2 ? VK_CULL_MODE_BACK_BIT : cull == 3 ? VK_CULL_MODE_FRONT_BIT
-                                                                                  : VK_CULL_MODE_NONE);
-                cur_cull = cull;
-            }
-            uint32_t flags = 0;
-            if (isp & (1u << 25)) flags |= F_TEXTURE;
-            if (isp & (1u << 24)) flags |= F_OFFSET;
-            if (tsp & (1u << 20)) flags |= F_USE_ALPHA;
-            if (tsp & (1u << 19)) flags |= F_IGNORE_TEX_ALPHA;
-            if (list == LIST_PUNCH) flags |= F_ALPHA_TEST;
-            if (((tsp >> 22) & 3) == 1) flags |= F_FOG_VERTEX;
-            flags |= ((tsp >> 6) & 3) << F_SHADE_SHIFT;
-            push.flags = flags;
-            vkCmdPushConstants(cmd, R.pvr_layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                               sizeof push, &push);
-            /* user tile clip (inside mode) */
-            if (p->tile_clip == 2) {
-                int x0 = p->clip[0] * 32 + (int)xoff, y0 = p->clip[1] * 32;
-                int x1 = (p->clip[2] + 1) * 32 + (int)xoff, y1 = (p->clip[3] + 1) * 32;
-                float sx = W / (gw + 2 * xoff), sy = H / gh;
-                int32_t sx0 = (int32_t)(x0 * sx), sx1 = (int32_t)(x1 * sx);  /* within the bars */
-                sx0 = sx0 < full.offset.x ? full.offset.x : sx0;
-                sx1 = sx1 > full.offset.x + (int32_t)full.extent.width ? full.offset.x + (int32_t)full.extent.width : sx1;
-                VkRect2D sc = {{sx0, (int32_t)(y0 * sy)}, {(uint32_t)(sx1 > sx0 ? sx1 - sx0 : 0), (uint32_t)((y1 - y0) * sy)}};
-                vkCmdSetScissor(cmd, 0, 1, &sc);
-                vkCmdDraw(cmd, p->vertex_count, 1, p->first_vertex, 0);
-                vkCmdSetScissor(cmd, 0, 1, &full);
-            } else {
-                vkCmdDraw(cmd, p->vertex_count, 1, p->first_vertex, 0);
-            }
+            f->sused += (n * 6 + 255) & ~255ull;
+            free(R.mask_pending);
+            R.mask_pending = NULL;
+            if (!R.fill_set) R.fill_set = alloc_set(R.fill_img.view, R.blit_sampler);  /* bilinear, clamped */
         }
     }
+
+    /* the fill's palettes' colours now against the capture's (cap_pal): worked out again when one of those palettes
+     * changes (not the fighters' or the HUD's, which change all the time) */
+    int pal_changed = 0;
+    if (next && R.pal_img.image && f->sused + sizeof R.pal_table + 256 <= f->scap) {
+        const uint32_t *pr = pvr_palette();
+        for (int k = 0; k < ATLAS_LAYERS; k++)
+            for (int s = 0; s < CAP_PALS; s++) {
+                float now[3], *mul = R.pal_table[k * 2][s], *add = R.pal_table[k * 2 + 1][s];
+                if (s >= R.cap_pal[k].n) {
+                    if (R.pal_dirty) mul[0] = mul[1] = mul[2] = mul[3] = 1, add[0] = add[1] = add[2] = add[3] = 0;
+                    continue;
+                }
+                uint32_t b = R.cap_pal[k].base[s] & 1023, c = R.cap_pal[k].count[s];
+                if (b + c > 1024) c = 1024 - b;
+                if (!R.pal_dirty && !memcmp(pr + b, R.pal_ram + b, c * sizeof *pr)) continue;  /* (unchanged) */
+                pal_changed = 1;
+                mul[0] = mul[1] = mul[2] = mul[3] = 1, add[0] = add[1] = add[2] = add[3] = 0;
+                pal_mean(R.cap_pal[k].base[s], R.cap_pal[k].count[s], R.cap_pal[k].hist[s], now);
+                for (int c2 = 0; c2 < 3; c2++) {
+                    float cap = R.cap_pal[k].mean[s][c2];
+                    if (cap > 0.05f) mul[c2] = now[c2] / cap;
+                    else add[c2] = now[c2] - cap;
+                }
+            }
+        pal_changed |= R.pal_dirty;
+        if (pal_changed) memcpy(R.pal_ram, pr, sizeof R.pal_ram);
+        R.pal_dirty = 0;
+    }
+    if (pal_changed) {
+        memcpy((uint8_t *)f->smap + f->sused, R.pal_table, sizeof R.pal_table);
+        g_perf.upload_bytes += sizeof R.pal_table;
+        barrier(cmd, R.pal_img.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, 0,
+                VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+        VkBufferImageCopy c = {.bufferOffset = f->sused, .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+                               .imageExtent = {CAP_PALS, ATLAS_LAYERS * 2, 1}};
+        vkCmdCopyBufferToImage(cmd, f->sbuf, R.pal_img.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &c);
+        barrier(cmd, R.pal_img.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+        f->sused += (sizeof R.pal_table + 255) & ~255ull;
+    }
+
+    /* layer captures (widescreen.c): each layer's polygons laid out at ATLAS_X into its own image, a map unit a
+     * pixel, then copied out for the filler analysis (read when this frame's fence has passed: frame_begin) */
+    if (atlas_layers) {
+        if (!R.atlas_buf) {
+            make_buffer((VkDeviceSize)ATLAS_W * ATLAS_H * 4 * ATLAS_LAYERS, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                        &R.atlas_buf, &R.atlas_mem, &R.atlas_map);
+            make_image(ATLAS_W, ATLAS_H, VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+                       VK_IMAGE_ASPECT_DEPTH_BIT, &R.atlas_depth);
+            for (int k = 0; k < ATLAS_LAYERS; k++)
+                make_image(ATLAS_W, ATLAS_H, VK_FORMAT_R8G8B8A8_UNORM,
+                           VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                           VK_IMAGE_ASPECT_COLOR_BIT, &R.atlas_img[k]);
+        }
+        PvrPush apush = push;
+        float aw = (float)ATLAS_W * 640.0f / 384.0f;  /* the capture's width in guest pixels */
+        apush.scale[0] = 2.0f / aw;
+        apush.pad[0] = 0;
+        VkRect2D afull = {{0, 0}, {ATLAS_W, ATLAS_H}};
+        for (int k = 0; k < ATLAS_LAYERS; k++) {
+            if (!(atlas_layers & (1 << k))) continue;
+            barrier(cmd, R.atlas_img[k].image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
+                    VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_2_COPY_BIT, 0,
+                    VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+            barrier(cmd, R.atlas_depth.image, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
+                    VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                    VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                    VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                    VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT);
+            VkRenderingAttachmentInfo aca = ca, ada = da;
+            aca.imageView = R.atlas_img[k].view;
+            aca.clearValue.color = (VkClearColorValue){{0, 0, 0, 0}};
+            ada.imageView = R.atlas_depth.view;
+            VkRenderingInfo ari = ri;
+            ari.renderArea = afull;
+            ari.pColorAttachments = &aca;
+            ari.pDepthAttachment = &ada;
+            vkCmdBeginRendering(cmd, &ari);
+            VkViewport avp = {0, 0, (float)ATLAS_W, (float)ATLAS_H, 0, 1};
+            vkCmdSetViewport(cmd, 0, 1, &avp);
+            vkCmdSetScissor(cmd, 0, 1, &afull);
+            vkCmdSetFrontFace(cmd, VK_FRONT_FACE_CLOCKWISE);
+            vkCmdBindVertexBuffers(cmd, 0, 1, &f->vbuf, &voff);
+            draw_polys(cmd, pf, sets, tr_order, ntr, autosort, apush, afull, 0, aw, gh, ATLAS_W, ATLAS_H, 0, atlas, k);
+            vkCmdEndRendering(cmd);
+            barrier(cmd, R.atlas_img[k].image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                    VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                    VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT);
+            VkBufferImageCopy c = {.bufferOffset = (VkDeviceSize)k * ATLAS_W * ATLAS_H * 4,
+                                   .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+                                   .imageExtent = {ATLAS_W, ATLAS_H, 1}};
+            vkCmdCopyImageToBuffer(cmd, R.atlas_img[k].image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, R.atlas_buf, 1, &c);
+            f->atlas_layers |= 1 << k;
+        }
+        VkMemoryBarrier2 mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, .srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT,
+                               .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                               .dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT, .dstAccessMask = VK_ACCESS_2_HOST_READ_BIT};
+        VkDependencyInfo di = {VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .memoryBarrierCount = 1, .pMemoryBarriers = &mb};
+        vkCmdPipelineBarrier2(cmd, &di);
+        vkCmdSetViewport(cmd, 0, 1, &vp);
+    }
+
+    vkCmdBeginRendering(cmd, &ri);
+    vkCmdSetScissor(cmd, 0, 1, &full);
+    vkCmdSetFrontFace(cmd, VK_FRONT_FACE_CLOCKWISE);
+    vkCmdBindVertexBuffers(cmd, 0, 1, &f->vbuf, &voff);
+    if (next) {
+        float sx = (float)W / (gw + 2 * xoff), sy = (float)H / gh;  /* render target pixels per guest pixel */
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, R.ext_pipeline);
+        VkDescriptorSet sets3[3] = {R.fill_set, R.mask_set, R.pal_set};
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, R.ext_layout, 0, 3, sets3, 0, NULL);
+        for (int k = 0; k < next; k++) {
+            float y0 = ext[k].r0 / gh * 2 - 1, y1 = ext[k].r1 / gh * 2 - 1;
+            float pc[20] = {ext[k].u0, 384.0f / 640.0f / sx, ext[k].v0, 0.5f / sy,
+                            (float)(ext[k].layer * WIDE_MASK_ROWS), ext[k].z * push.zscale, (float)ext[k].backdrop, (float)emode,
+                            ext[k].q0 * sx / (float)W * 2 - 1, ext[k].q1 * sx / (float)W * 2 - 1, etint[k][0], etint[k][1],
+                            etint[k][2], etint[k][3], etint[k][4], etint[k][5],
+                            y0 < -1 ? -1 : y0, y1 > 1 ? 1 : y1, 0, 0};
+            vkCmdPushConstants(cmd, R.ext_layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                               sizeof pc, pc);
+            vkCmdDraw(cmd, 4, 1, 0, 0);
+        }
+    }
+    extern int g_wide_probe;
+    extern float g_wide_probe_z;
+    draw_polys(cmd, pf, sets, tr_order, ntr, autosort, push, full, xoff, gw, gh, W, H,
+               g_wide_probe && wide_fight ? g_wide_probe_z : 0, atlas, -1);
     vkCmdEndRendering(cmd);
+    if (R.timestamps && !f->timed) {
+        vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, R.timestamps, (uint32_t)fidx * 2 + 1);
+        f->timed = 1;
+    }
     barrier(cmd, rt->color.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
             VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
@@ -1297,7 +1695,7 @@ static void write_png(const char *path, const uint8_t *rgba, uint32_t w, uint32_
 }
 
 static void screenshot(RenderTarget *rt) {
-    uint32_t w = R.rt_w * R.scale, h = 480 * R.scale;
+    uint32_t w = rt_width(), h = R.height;
     VkBuffer buf;
     VkDeviceMemory mem;
     void *map;
@@ -1412,16 +1810,9 @@ void renderer_present_fb(void) {
     if (rt) {
         float sw = (float)R.sc_extent.width, sh = (float)R.sc_extent.height;
         float w = sw, h = sh;
-        if (g_settings.picture == PICTURE_INTEGER) {
-            /* largest whole multiple of 640x480 (wider with widescreen) that fits (pixel-perfect); below 1x, fall
-             * back to the picture's shape */
-            float pw = (float)R.rt_w;
-            int k = 1;
-            while (pw * (k + 1) <= sw && 480 * (k + 1) <= sh) k++;
-            if (pw * k <= sw && 480 * k <= sh) { w = pw * k; h = 480.0f * k; }
-            else { h = sw * 480.0f / pw; if (h > sh) { h = sh; w = sh * pw / 480.0f; } }
-        } else if (g_settings.picture == PICTURE_4_3) {
-            float aspect = (float)R.rt_w / 480.0f;  /* 4:3, wider with widescreen */
+        {  /* the picture's shape, 4:3 or 16:9 (4:3 in an online game), as big as fits: black at the sides of a
+            * wider screen, above and below on a taller one */
+            float aspect = R.pic_w / 480.0f;
             h = sw / aspect;
             if (h > sh) { h = sh; w = sh * aspect; }
         }
@@ -1518,10 +1909,10 @@ void renderer_present_fb(void) {
         vkQueueWaitIdle(R.queue);
         screenshot(rt);
     }
-    /* widescreen: the margin that fills the window (widescreen.c); a new one, like a new render
+    /* widescreen: the picture's margin (PICTURE 16:9; widescreen.c); a new one, like a new render
      * resolution, takes effect between frames (after the menu closes, so the paused picture stays
      * visible behind it) */
-    s_margin_wanted = widescreen_wanted((float)R.sc_extent.width / (float)(R.sc_extent.height ? R.sc_extent.height : 1));
+    s_margin_wanted = widescreen_wanted();
     if (s_margin_wanted != widescreen_margin()) s_rt_rebuild = 1;
     if (s_rt_rebuild && !menu_active()) rebuild_render_targets();
 }
