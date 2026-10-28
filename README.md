@@ -179,11 +179,10 @@ settings are also on F1 / Esc at any time (this pauses the game):
 | Setting | Values |
 |---|---|
 | Window mode | window, borderless fullscreen, exclusive fullscreen |
-| Window size | 640x480 to 2560x1920 (window mode) |
+| Window size | window mode: FIT (as big as the screen allows), or 4:3 sizes from 640x480 to 2560x1920; with Picture 16:9, 16:9 sizes from 854x480 to 3840x2160 |
 | Resolution | your monitor's modes and refresh rates (exclusive fullscreen) |
-| Picture | 4:3, stretch, integer (pixel-perfect) |
-| Widescreen | off / on: fights fill a wide window or screen with more of the stage, not stretched (the health and super bars stay where they are). The view never shows past what the stage has: near a wall it slides inward, and where a distant part of a stage runs out the sides are black. Menus, cutscenes and online games stay 4:3 |
-| Render res | internal resolution, 640x480 to 3840x2880 (3200x2400 is full detail on a 4K screen) |
+| Picture | 4:3: the original picture (black at the sides of a wider screen). 16:9: fights show more of the stage, not stretched; the health and super bars stay where they are, the walls and how far apart the fighters can be are the original's, and at a wall the stage's edge is the screen's edge. Where part of a stage was only painted as far as the 4:3 game shows it, or holds flat unpainted patches the 4:3 game never showed, it is continued from its own art, softened; art the 4:3 game simply never reached is shown as painted. Menus, cutscenes and online games stay 4:3 |
+| Render res | internal resolution: 4:3 from 640x480 to 3840x2880; with Picture 16:9, from 854x480 to 5120x2880. Match your screen's height for the sharpest picture: on a 4K screen, 3840x2160 at 16:9 (2880x2160 at 4:3) |
 | VSync | on / off |
 | CRT | off, scanlines, PVM (a Trinitron monitor: beam, mask, glow); level 10-100 |
 | Textures | smooth / sharp |

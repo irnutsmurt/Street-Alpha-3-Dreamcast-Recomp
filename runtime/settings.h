@@ -3,17 +3,17 @@
 #pragma once
 
 enum { WINDOW_WINDOWED, WINDOW_BORDERLESS, WINDOW_EXCLUSIVE };
-enum { PICTURE_4_3, PICTURE_STRETCH, PICTURE_INTEGER };
+enum { PICTURE_4_3 = 0, PICTURE_16_9 = 3 };  /* (1 and 2 were STRETCH and INTEGER before 0.2.8: now 4:3) */
 enum { COLOR_STANDARD, COLOR_TV, COLOR_VIVID };
 
 typedef struct {
     int window_mode;        /* WINDOW_* */
-    int window_scale;       /* windowed size: 0 = fit the screen, N = N x 640x480 */
+    int window_height;      /* windowed size: 0 = fit the screen, else its height (the width follows the picture's
+                             * shape: 4:3, or 16:9; options.c) */
     int fs_width, fs_height, fs_refresh;  /* exclusive fullscreen mode (refresh in Hz) */
-    int picture;            /* PICTURE_* */
-    int widescreen;         /* 1 = fights as wide as the window (widescreen.c) */
+    int picture;            /* PICTURE_*: 16:9 makes fights wide (widescreen.c) */
     int color;              /* COLOR_*: colour response of the final picture */
-    int scale;              /* internal render resolution multiplier (1 = 640x480) */
+    int render_height;      /* internal render resolution's height (the width follows the picture's shape) */
     int vsync;              /* 1 = wait for the display's refresh */
     int scanlines;          /* CRT look: 0 off, 1 scanlines, 2 PVM (Trinitron monitor) */
     int scanline_strength;  /* how strong the CRT look is, percent, 10..100 */

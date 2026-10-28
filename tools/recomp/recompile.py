@@ -64,7 +64,7 @@ HOOKS = {
     0x8C017900: "hle_layout_draw_set",  # the same, a base from a table (versus' select screen)
     0x8C024AD4: "hle_ending_anim",  # an animation starts: the PSP characters' endings draw people from the fighters' banks (psp_load.c)
     0x8C0218B6: "hle_ending_setup",  # the ending's setup, its handlers in: the PSP's for the PSP characters' endings (psp_load.c)
-    0x8C01A08E: "hle_scroll_object",  # an object's screen position less its scroll layer's: widescreen's slide (widescreen.c)
+    0x8C01A08E: "hle_scroll_object",  # an object's screen position less its scroll layer's: the wide view's (widescreen.c)
     0x8C01EBA8: "hle_stage_layout",   # the fight's background laid out: widescreen draws it wider (widescreen.c)
 }
 # Instructions given other code (codegen.REPLACE): widescreen (runtime/widescreen.c). The sprite part drawer

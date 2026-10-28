@@ -43,7 +43,7 @@ target_compile_options(sfa3_game PRIVATE -O2 -w -fno-strict-aliasing -fwrapv)
 set(RENDERER "vulkan" CACHE STRING "Renderer backend: vulkan or null")
 set(RUNTIME_SRC
   runtime/main.c runtime/sh4.c runtime/irq.c runtime/mmio.c runtime/pvr.c
-  runtime/ta.c runtime/widescreen.c runtime/hle.c runtime/gdi.c runtime/maple.c runtime/aica.c
+  runtime/ta.c runtime/widescreen.c runtime/wide_filler.c runtime/hle.c runtime/gdi.c runtime/maple.c runtime/aica.c
   runtime/overlay.c runtime/input_sdl.c runtime/task.c
   runtime/fiber.c runtime/sjlj.c runtime/arm_rt.c runtime/settings.c runtime/menu.c runtime/controls.c runtime/options.c runtime/display_menu.c runtime/buttoncfg.c runtime/pause_menu.c runtime/title_quit.c runtime/net.c runtime/netplay.c
   runtime/gameui.c runtime/lobby.c runtime/sprite_swap.c runtime/cheats.c runtime/option_menu.c runtime/psp.c runtime/psp_load.c runtime/read_trace.c runtime/chartables.c runtime/sprite_log.c)
@@ -57,7 +57,7 @@ find_program(GLSLC glslc REQUIRED)
 set(SHADER_OUT ${CMAKE_BINARY_DIR}/shaders)
 file(MAKE_DIRECTORY ${SHADER_OUT})
 set(SHADER_INCS)
-foreach(s pvr.vert pvr.frag blit.vert blit.frag)
+foreach(s pvr.vert pvr.frag blit.vert blit.frag ext.vert ext.frag)
   add_custom_command(
     OUTPUT ${SHADER_OUT}/${s}.inc
     COMMAND ${GLSLC} -O -mfmt=c ${CMAKE_SOURCE_DIR}/runtime/shaders/${s} -o ${SHADER_OUT}/${s}.inc

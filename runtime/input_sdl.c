@@ -120,9 +120,12 @@ static void scripted_input(PadState *st) {
  *   press2 <button> [frames]  the same on port B (player 2)
  *   wait <frames>
  *   untilnz <hex address> [frames [button]]          wait until the guest u16 there isn't 0
+ *   untilnz8 <hex address> [frames [button]]         the same for the byte there
  *   untileq <hex address> <value> [frames [button]]  wait until the guest byte there is value
  *                             (both: at most frames, default 6000; tapping player 1's button meanwhile)
  *   shot                      write a screenshot (build/shot_<frame>.png)
+ *   shotat <frame> <n>        a screenshot every frame from that vblank on, n of them (whatever else waits)
+ *   dumpat <frame> <n>        the same for dumprender (n renders from that vblank on)
  *   mark <file>               create the file (the commands before it are done)
  *   shotp                     screenshot of the presented window image
  *   menu <toggle|up|down|left|right|accept|back>  drive the settings menu */
@@ -132,7 +135,9 @@ static char s_ctl_queue[CTL_QUEUE][256];
 static int s_ctl_head, s_ctl_tail, s_ctl_timer;
 static uint32_t s_ctl_until;  /* "untilnz", "untileq": the address waited on */
 static int s_ctl_until_left;
-static int s_ctl_until_eq;  /* "untileq": the byte value waited for; -1: "untilnz" (the u16 not 0) */
+static uint64_t s_shot_from, s_dump_at;  /* "shotat", "dumpat" */
+static int s_shot_n, s_dump_at_n;
+static int s_ctl_until_eq;  /* "untileq": the byte value waited for; -1: "untilnz" (the u16 not 0), -2 "untilnz8" */
 static uint32_t s_ctl_until_button;  /* pressed every 40 frames meanwhile (0: none) */
 static uint32_t s_ctl_hold;
 static int s_ctl_port;  /* 0 = player 1 ("press"), 1 = player 2 ("press2") */
@@ -185,6 +190,12 @@ static void control_file(PadState *st) {
         remove(path);
     }
     for (int p = 0; p < 2; p++) ctl_apply(&st[p], s_ctl_held[p]);
+    if (s_shot_n > 0 && g_vblank_count >= s_shot_from) g_shot_request = 1, s_shot_n--;
+    if (s_dump_at_n > 0 && g_vblank_count >= s_dump_at) {
+        void renderer_dump_next(int n);
+        renderer_dump_next(s_dump_at_n);
+        s_dump_at_n = 0;
+    }
     if (s_ctl_timer > 0) {
         s_ctl_timer--;
         if (s_ctl_timer > 10) ctl_apply(&st[s_ctl_port], s_ctl_hold);
@@ -192,7 +203,7 @@ static void control_file(PadState *st) {
     }
     if (s_ctl_until && s_ctl_until_left > 0) {  /* untilnz / untileq: hold the queue until the guest memory matches */
         s_ctl_until_left--;
-        if (s_ctl_until_eq < 0 ? !R16(s_ctl_until) : R8(s_ctl_until) != (uint32_t)s_ctl_until_eq) {
+        if (s_ctl_until_eq == -2 ? !R8(s_ctl_until) : s_ctl_until_eq < 0 ? !R16(s_ctl_until) : R8(s_ctl_until) != (uint32_t)s_ctl_until_eq) {
             if (s_ctl_until_button && s_ctl_until_left % 40 < 8) ctl_apply(&st[0], s_ctl_until_button);
             return;
         }
@@ -217,13 +228,13 @@ static void control_file(PadState *st) {
         s_ctl_held[atoi(arg) == 2] = button_bit(what);
     } else if (!strcmp(cmd, "wait")) {
         s_ctl_timer = atoi(arg);
-    } else if (!strcmp(cmd, "untilnz")) {  /* untilnz <hex address> [frames [button]]: wait until the guest u16
+    } else if (!strcmp(cmd, "untilnz") || !strcmp(cmd, "untilnz8")) {  /* untilnz <hex address> [frames [button]]: wait until the guest u16
                                               * there isn't 0, pressing player 1's button every 40 frames (testing) */
         char button[32] = "";
         sscanf(line, "%*s %*s %*d %31s", button);
         s_ctl_until = (uint32_t)strtoul(arg, NULL, 16);
         s_ctl_until_left = n > 0 ? n : 6000;
-        s_ctl_until_eq = -1;
+        s_ctl_until_eq = cmd[7] ? -2 : -1;
         s_ctl_until_button = button[0] ? button_bit(button) : 0;
     } else if (!strcmp(cmd, "untileq")) {  /* untileq <hex address> <value> [frames [button]]: the same until the
                                               * guest byte there is value (decimal, as poke's) (testing) */
@@ -237,6 +248,12 @@ static void control_file(PadState *st) {
     } else if (!strcmp(cmd, "mark")) {  /* mark <file>: create the file (a script waits for its commands so) */
         FILE *mf = fopen(arg, "w");
         if (mf) fclose(mf);
+    } else if (!strcmp(cmd, "dumpat")) {
+        s_dump_at = strtoull(arg, NULL, 10);
+        s_dump_at_n = n;
+    } else if (!strcmp(cmd, "shotat")) {
+        s_shot_from = strtoull(arg, NULL, 10);
+        s_shot_n = n;
     } else if (!strcmp(cmd, "shot")) {
         g_shot_request = 1;
     } else if (!strcmp(cmd, "shotp")) {  /* presented image: includes scanlines and the menu */
@@ -265,9 +282,9 @@ static void control_file(PadState *st) {
         ev.key.scancode = SDL_GetScancodeFromName(t ? t + 1 : "");
         ev.key.down = true;
         SDL_PushEvent(&ev);
-    } else if (!strcmp(cmd, "dumprender")) {  /* log the next render's polygons, textures to build/tex_*.png */
-        void renderer_dump_next(void);
-        renderer_dump_next();
+    } else if (!strcmp(cmd, "dumprender")) {  /* dumprender [n]: log the next n renders' polygons, textures to build/tex_*.png */
+        void renderer_dump_next(int n);
+        renderer_dump_next(atoi(arg));
     } else if (!strcmp(cmd, "quit")) {  /* as if the window were closed */
         g_quit_requested = 1;
     } else if (!strcmp(cmd, "autopilot")) {  /* drive player 1 to Mode Menu > NETWORK */
@@ -303,6 +320,9 @@ static void control_file(PadState *st) {
     } else if (!strcmp(cmd, "vramdump")) {  /* vramdump <file>: write the 8 MB of video RAM (debug) */
         FILE *f = fopen(arg, "wb");
         if (f) { fwrite(g_vram, 1, 8 << 20, f); fclose(f); logf_("vramdump %s", arg); }
+    } else if (!strcmp(cmd, "probe")) {  /* probe <what> <x>: one stage layer alone (widescreen.c, testing) */
+        void widescreen_probe(int what, int x);
+        widescreen_probe(atoi(arg), n);
     } else if (!strcmp(cmd, "winsize")) {  /* winsize <w> <h>: resize the window, as dragging its edge does (testing) */
         SDL_SetWindowSize(g_window, atoi(arg), n);
     } else if (!strcmp(cmd, "rtdump")) {  /* rtdump <file>: the read trace (debug builds, read_trace.c) */

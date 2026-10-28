@@ -267,6 +267,36 @@ static void on_signal(int sig) {
 
 Perf g_perf;
 
+/* SFA3_FRAME_LOG=<file>: a line a vblank (testing frame pacing): the time (ms), the time since the last present
+ * finished, and this vblank's draw / present / GPU wait / texture decode / GPU (the render timed then) / stage
+ * layout / extension CPU ms, texture decodes, bytes uploaded or read back, the extension's analysis running */
+static Perf s_flast;
+static void frame_log_rebase(void) {  /* g_perf about to start from 0: what's counted since the last line kept */
+    uint64_t *l = (uint64_t *)&s_flast;
+    const uint64_t *p = (const uint64_t *)&g_perf;
+    for (size_t i = 0; i < sizeof g_perf / sizeof *l; i++) l[i] -= p[i];
+}
+
+static void frame_log(uint64_t present_end) {
+    static FILE *f;
+    static int on = -1;
+    static uint64_t prev_present;
+    Perf last = s_flast;
+    if (on < 0) on = (f = getenv("SFA3_FRAME_LOG") ? fopen(getenv("SFA3_FRAME_LOG"), "w") : NULL) != NULL;
+    if (!on) return;
+    int widescreen_busy(void);
+    Perf d = g_perf;
+    #define D(x) (d.x - last.x)
+    fprintf(f, "%.3f %.3f %.3f %.3f %.3f %.3f %.3f %.3f %.3f %llu %llu %d\n", present_end / 1e6,
+            prev_present ? (present_end - prev_present) / 1e6 : 0.0, D(draw_ns) / 1e6, D(present_ns) / 1e6,
+            D(gpu_wait_ns) / 1e6, D(tex_ns) / 1e6, D(gpu_ns) / 1e6, D(layout_ns) / 1e6, D(wide_ns) / 1e6,
+            (unsigned long long)D(tex_decodes), (unsigned long long)D(upload_bytes), widescreen_busy());
+    #undef D
+    s_flast = d;
+    prev_present = present_end;
+    if (g_vblank_count % 60 == 0) fflush(f);
+}
+
 void video_vblank(void) {
     s_frames++;
     g_stats.vblanks++;
@@ -318,10 +348,14 @@ void video_vblank(void) {
         uint64_t t = SDL_GetTicksNS(), wall = last ? t - last : 0;
         last = t;
         uint64_t busy = g_perf.draw_ns + g_perf.present_ns + g_perf.idle_ns;
-        logf_("perf: wall=%.0fms draw=%.1f present=%.1f (gpu wait %.1f) tex=%llu/%.1fms idle=%.1f game=%.1f",
+        logf_("perf: wall=%.0fms draw=%.1f present=%.1f (gpu wait %.1f) tex=%llu/%.1fms idle=%.1f game=%.1f "
+              "gpu=%.3fms/render ext=%llu",
               wall / 1e6, g_perf.draw_ns / 1e6, g_perf.present_ns / 1e6, g_perf.gpu_wait_ns / 1e6,
               (unsigned long long)g_perf.tex_decodes, g_perf.tex_ns / 1e6, g_perf.idle_ns / 1e6,
-              wall > busy ? (wall - busy) / 1e6 : 0.0);
+              wall > busy ? (wall - busy) / 1e6 : 0.0,
+              g_perf.gpu_frames ? g_perf.gpu_ns / 1e6 / (double)g_perf.gpu_frames : 0.0,
+              (unsigned long long)g_perf.ext_passes);
+        frame_log_rebase();
         memset(&g_perf, 0, sizeof g_perf);
         logf_("stats: vbl=%llu irq=%llu render=%llu ta=%llu gd=%llu maple=%llu icall=%llu",
               (unsigned long long)g_stats.vblanks, (unsigned long long)g_stats.irqs,
@@ -355,6 +389,7 @@ void video_vblank(void) {
         uint64_t t0 = SDL_GetTicksNS();
         renderer_present_fb();
         g_perf.present_ns += SDL_GetTicksNS() - t0;
+        frame_log(SDL_GetTicksNS());
     }
     input_update();
     netplay_tick();

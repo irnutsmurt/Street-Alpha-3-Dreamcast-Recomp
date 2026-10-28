@@ -118,6 +118,20 @@ void pvr_tex_info(uint32_t tcw, uint32_t tsp, TexKey *key) {
     key->paletted = fmt == FMT_PAL4 || fmt == FMT_PAL8;
 }
 
+uint32_t pvr_pal_color(uint32_t i) { return pal_entry(i); }
+
+void pvr_tex_pal_hist(const TexKey *key, float *hist) {
+    int fmt = (key->tcw >> 27) & 7, vq = (key->tcw >> 30) & 1, mip = (key->tcw >> 31) & 1;
+    if ((fmt != FMT_PAL4 && fmt != FMT_PAL8) || vq) return;
+    uint32_t w = key->w, h = key->h, base = key->addr + (mip ? mip_offset(fmt, 0, w) : 0);
+    for (uint32_t y = 0; y < h; y++)
+        for (uint32_t x = 0; x < w; x++) {
+            uint32_t t = twiddle(x, y, w, h);
+            uint8_t b = g_vram[(base + (fmt == FMT_PAL4 ? t >> 1 : t)) & 0x7FFFFF];
+            hist[fmt == FMT_PAL4 ? ((t & 1) ? b >> 4 : b & 15) : b] += 1.0f;
+        }
+}
+
 /* twiddle() split by axis: the x and y bits never overlap, so
  * twiddle(x, y) == tw_x[x] | tw_y[y] (tables built once per decode). */
 static void twiddle_tables(uint32_t w, uint32_t h, uint32_t *tx, uint32_t *ty) {

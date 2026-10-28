@@ -9,9 +9,9 @@
 #include "settings.h"
 
 const Settings g_settings_default = {
-    .window_mode = WINDOW_WINDOWED, .window_scale = 0,
+    .window_mode = WINDOW_WINDOWED, .window_height = 0,
     .fs_width = 0, .fs_height = 0, .fs_refresh = 0,  /* 0 = the desktop's mode */
-    .picture = PICTURE_4_3, .color = COLOR_STANDARD, .scale = 3, .vsync = 0,
+    .picture = PICTURE_4_3, .color = COLOR_STANDARD, .render_height = 1440, .vsync = 0,
     .scanlines = 0, .scanline_strength = 50, .nearest = 0, .name = "PLAYER",
 };
 Settings g_settings;
@@ -25,14 +25,13 @@ static const struct {
 } s_keys[] = {
 #define K(field, env, lo, hi, comment) {#field, env, comment, offsetof(Settings, field), lo, hi}
     K(window_mode, "SFA3_WINDOW_MODE", 0, 2, "0 = window, 1 = borderless fullscreen, 2 = exclusive fullscreen"),
-    K(window_scale, "SFA3_WINDOW_SCALE", 0, 4, "window size: 0 = fit the screen, N = N x 640x480"),
+    K(window_height, "SFA3_WINDOW_HEIGHT", 0, 4320, "window size: 0 = fit the screen, else its height (480, 720, 1080...; the width follows the picture: 4:3, or 16:9)"),
     K(fs_width, "SFA3_FS_WIDTH", 0, 16384, "exclusive fullscreen width (0 = desktop)"),
     K(fs_height, "SFA3_FS_HEIGHT", 0, 16384, "exclusive fullscreen height (0 = desktop)"),
     K(fs_refresh, "SFA3_FS_REFRESH", 0, 1000, "exclusive fullscreen refresh rate in Hz (0 = desktop)"),
-    K(picture, "SFA3_PICTURE", 0, 2, "0 = 4:3, 1 = stretch to fill, 2 = integer scale (pixel perfect)"),
-    K(widescreen, "SFA3_WIDESCREEN", 0, 1, "1 = fights as wide as the window (the HUD stays in the middle; menus stay 4:3)"),
+    K(picture, "SFA3_PICTURE", 0, 3, "0 = 4:3 (the original picture), 3 = 16:9 (fights show more of the stage)"),
     K(color, "SFA3_COLOR", 0, 2, "0 = standard (VGA cable), 1 = TV levels (as on a television / in videos), 2 = vivid"),
-    K(scale, "SFA3_SCALE", 1, 6, "internal render resolution multiplier (1 = 640x480, 3 = 1920x1440, 5 = 3200x2400 for 4K)"),
+    K(render_height, "SFA3_RENDER_HEIGHT", 240, 4320, "internal render resolution's height (480, 720, 1080, 1440, 2160...; the width follows the picture: 4:3, or 16:9; 16:9 at 2160 is exactly a 4K screen's pixels)"),
     K(vsync, "SFA3_VSYNC", 0, 1, "1 = wait for the display refresh (vsync)"),
     K(scanlines, "SFA3_SCANLINES", 0, 2, "CRT look: 0 off, 1 scanlines, 2 PVM monitor"),
     K(scanline_strength, "SFA3_SCANLINE_STRENGTH", 10, 100, "CRT look strength in percent (10-100)"),
@@ -86,6 +85,7 @@ void settings_load(const char *path) {
     snprintf(s_path, sizeof s_path, "%s", path);
     g_settings = g_settings_default;
     FILE *f = fopen(path, "r");
+    int old_scale = 0, old_window = -1, old_wide = 0, have_render = 0, have_window = 0;
     if (f) {
         char line[256], key[64], val[128];
         while (fgets(line, sizeof line, f)) {
@@ -100,16 +100,35 @@ void settings_load(const char *path) {
                 if (atoi(val)) g_settings.window_mode = WINDOW_BORDERLESS;
                 continue;
             }
+            if (!strcmp(key, "scale")) {  /* before 0.2.8: N x 640x480 */
+                old_scale = atoi(val);
+                continue;
+            }
+            if (!strcmp(key, "window_scale")) {  /* before 0.2.8: 0 = fit, N x 640x480 */
+                old_window = atoi(val);
+                continue;
+            }
+            if (!strcmp(key, "widescreen")) {  /* 0.2.7: on/off, now the picture 16:9 */
+                old_wide = atoi(val);
+                continue;
+            }
+            if (!strcmp(key, "render_height")) have_render = 1;
+            if (!strcmp(key, "window_height")) have_window = 1;
             for (size_t i = 0; i < NKEYS; i++)
                 if (!strcmp(key, s_keys[i].key)) set_key(&g_settings, i, val);
         }
         fclose(f);
+        if (!have_render && old_scale >= 1 && old_scale <= 6) g_settings.render_height = 480 * old_scale;
+        if (!have_window && old_window >= 0 && old_window <= 4) g_settings.window_height = 480 * old_window;
+        if (g_settings.picture != PICTURE_16_9) g_settings.picture = PICTURE_4_3;  /* STRETCH, INTEGER */
+        if (old_wide) g_settings.picture = PICTURE_16_9;
     }
     s_file = g_settings;
     for (size_t i = 0; i < NKEYS; i++) {
         const char *e = getenv(s_keys[i].env);
         if (e) set_key(&g_settings, i, e);
     }
+    if (g_settings.picture != PICTURE_16_9) g_settings.picture = PICTURE_4_3;
     if (getenv("SFA3_NAME")) set_name(g_settings.name, getenv("SFA3_NAME"));
     settings_save();  /* list every key, so new settings appear after upgrades */
 }

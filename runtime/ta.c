@@ -6,6 +6,7 @@
 #include "cpu.h"
 #include "pvr.h"
 #include "runtime.h"
+#include "widescreen.h"
 
 /* PCW fields */
 #define PT_END 0
@@ -63,6 +64,7 @@ void ta_list_init(void) {
     s_frame_key[slot] = key;
     PvrFrame *f = cur();
     f->nverts = f->npolys = 0;
+    f->wide_list = widescreen_list_begin();  /* the game sends the frame it laid out last (widescreen.c) */
     ta_reset();
 }
 
