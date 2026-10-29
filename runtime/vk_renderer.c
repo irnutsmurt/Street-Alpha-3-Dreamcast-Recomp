@@ -63,7 +63,7 @@ typedef struct {
 
 enum {
     F_TEXTURE = 1 << 0, F_OFFSET = 1 << 1, F_USE_ALPHA = 1 << 2, F_IGNORE_TEX_ALPHA = 1 << 3,
-    F_ALPHA_TEST = 1 << 4, F_FOG_VERTEX = 1 << 5, F_SHADE_SHIFT = 8,
+    F_ALPHA_TEST = 1 << 4, F_FOG_VERTEX = 1 << 5, F_TEXEL_BOX = 1 << 6, F_SHADE_SHIFT = 8,
 };
 
 typedef struct {
@@ -84,6 +84,7 @@ typedef struct {
     TexKey key;
     uint64_t hash;
     uint32_t page_gen;     /* VRAM write generation when last validated */
+    uint64_t checked;      /* the render it was last found up to date in (the guest is stopped during one) */
     uint64_t last_used;
     Image img;
     VkDescriptorSet sets[18];
@@ -431,16 +432,18 @@ static VkPipeline pvr_pipeline(int blend, int src, int dst) {
          .module = R.pvr_vs, .pName = "main"},
         {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
          .module = R.pvr_fs, .pName = "main"}};
-    VkVertexInputBindingDescription bind = {0, sizeof(PvrVertex), VK_VERTEX_INPUT_RATE_VERTEX};
-    VkVertexInputAttributeDescription attrs[4] = {
+    VkVertexInputBindingDescription bind[2] = {{0, sizeof(PvrVertex), VK_VERTEX_INPUT_RATE_VERTEX},
+                                               {1, 4 * sizeof(float), VK_VERTEX_INPUT_RATE_VERTEX}};
+    VkVertexInputAttributeDescription attrs[5] = {
         {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(PvrVertex, x)},
         {1, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(PvrVertex, u)},
         {2, 0, VK_FORMAT_B8G8R8A8_UNORM, offsetof(PvrVertex, base)},
-        {3, 0, VK_FORMAT_B8G8R8A8_UNORM, offsetof(PvrVertex, offset)}};
+        {3, 0, VK_FORMAT_B8G8R8A8_UNORM, offsetof(PvrVertex, offset)},
+        {4, 1, VK_FORMAT_R32G32B32A32_SFLOAT, 0}};  /* its polygon's texture coordinates' box (uv_boxes) */
     VkPipelineVertexInputStateCreateInfo vi = {VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
-                                               .vertexBindingDescriptionCount = 1,
-                                               .pVertexBindingDescriptions = &bind,
-                                               .vertexAttributeDescriptionCount = 4,
+                                               .vertexBindingDescriptionCount = 2,
+                                               .pVertexBindingDescriptions = bind,
+                                               .vertexAttributeDescriptionCount = 5,
                                                .pVertexAttributeDescriptions = attrs};
     VkPipelineInputAssemblyStateCreateInfo ia = {VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
                                                  .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP};
@@ -932,14 +935,15 @@ static Texture *get_texture(Frame *f, uint32_t tcw, uint32_t tsp) {
             victim = c;
     }
     int upload = 0;
-    if (t) {
+    if (t && t->checked != R.frame_no) {  /* once a render: VRAM and the palettes can't change during one, and a
+                                            * paletted texture is hashed whole (a stage's tiles: 57 MB a frame) */
         uint32_t gen = range_gen(key.addr, key.size);
         if (gen != t->page_gen || key.paletted) {
             uint64_t h = pvr_tex_hash(&key);
             t->page_gen = gen;
             if (h != t->hash) { t->hash = h; upload = 1; }
         }
-    } else {
+    } else if (!t) {
         t = victim;
         if (t->valid && t->last_used == R.frame_no) return NULL;  /* cache full this frame */
         destroy_image(&t->img);
@@ -971,7 +975,26 @@ static Texture *get_texture(Frame *f, uint32_t tcw, uint32_t tsp) {
         g_perf.tex_decodes++;
         upload_pixels(f, t, key.w, key.h, R.decode_buf);
     }
+    t->checked = R.frame_no;
     return t;
+}
+
+/* each vertex: its polygon's texture coordinates' box (u0, v0, u1, v1), for pvr.frag (F_TEXEL_BOX). The game puts
+ * a quad's corners a hair past whole texels (16.0064 at a 16-texel tile's right edge, of a 64-texel texture); at
+ * 640x480 no pixel centre comes within that hair of the edge, but scaled by a fraction (4.5 at 2160) one can: it
+ * took the next tile's texels, a one-pixel line down the quad */
+static void uv_boxes(const PvrFrame *pf, float *box) {
+    for (uint32_t i = 0; i < pf->npolys; i++) {
+        const PvrPoly *p = &pf->polys[i];
+        if (!p->vertex_count || p->first_vertex + p->vertex_count > pf->nverts) continue;
+        const PvrVertex *v = &pf->verts[p->first_vertex];
+        float b[4] = {v->u, v->v, v->u, v->v};
+        for (uint32_t k = 1; k < p->vertex_count; k++) {
+            b[0] = fminf(b[0], v[k].u), b[1] = fminf(b[1], v[k].v);
+            b[2] = fmaxf(b[2], v[k].u), b[3] = fmaxf(b[3], v[k].v);
+        }
+        for (uint32_t k = 0; k < p->vertex_count; k++) memcpy(&box[4 * (p->first_vertex + k)], b, sizeof b);
+    }
 }
 
 static int sampler_index(uint32_t tsp) {
@@ -1108,6 +1131,8 @@ static void draw_polys(VkCommandBuffer cmd, const PvrFrame *pf, const VkDescript
             /* a layer capture (widescreen.c) records what the PowerVR shows: an opaque-list texel is opaque */
             if (atlas_layer >= 0 && list == LIST_OPAQUE) flags |= F_IGNORE_TEX_ALPHA;
             if (((tsp >> 22) & 3) == 1) flags |= F_FOG_VERTEX;
+            /* point-sampled: its own texels only (pvr.frag); the layer captures as they were */
+            if ((flags & F_TEXTURE) && atlas_layer < 0 && sampler_index(tsp) < 9) flags |= F_TEXEL_BOX;
             flags |= ((tsp >> 6) & 3) << F_SHADE_SHIFT;
             push.flags = flags;
             vkCmdPushConstants(cmd, R.pvr_layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
@@ -1246,8 +1271,8 @@ void renderer_draw(const PvrFrame *pf) {
         sets[i] = t->sets[si];
     }
 
-    VkDeviceSize vbytes = pf->nverts * sizeof(PvrVertex);
-    if (f->vused + vbytes > f->vcap) return;  /* overflow: skip this render */
+    VkDeviceSize vbytes = pf->nverts * sizeof(PvrVertex), bbytes = pf->nverts * 4 * sizeof(float);
+    if (f->vused + ((vbytes + 255) & ~255ull) + bbytes > f->vcap) return;  /* overflow: skip this render */
     memcpy((uint8_t *)f->vmap + f->vused, pf->verts, vbytes);
     float stage_bar;  /* widescreen: the picture's sides a stage's art doesn't reach (widescreen.c) */
     int wide_fight = widescreen_stage_frame(pf->wide_list, &stage_bar) && xoff > 0;  /* a fight's frame, drawn wide */
@@ -1344,8 +1369,11 @@ void renderer_draw(const PvrFrame *pf) {
         for (int k = 0; k < next; k++)
             logf_("  ext %d: z %g layer %d cols %.2f..%.2f u0 %.2f v0 %.2f", k, ext[k].z, ext[k].layer, ext[k].q0,
                   ext[k].q1, ext[k].u0, ext[k].v0);
-    VkDeviceSize voff = f->vused;
-    f->vused += (vbytes + 255) & ~255ull;
+    VkDeviceSize voff = f->vused, boff = voff + ((vbytes + 255) & ~255ull);
+    uv_boxes(pf, (float *)((uint8_t *)f->vmap + boff));
+    f->vused = boff + ((bbytes + 255) & ~255ull);
+    VkBuffer vbufs[2] = {f->vbuf, f->vbuf};
+    VkDeviceSize voffs[2] = {voff, boff};
 
     barrier(f->cmd, rt->color.image, VK_IMAGE_ASPECT_COLOR_BIT,
             rt->initialized ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
@@ -1394,7 +1422,7 @@ void renderer_draw(const PvrFrame *pf) {
     }
     vkCmdSetScissor(cmd, 0, 1, &full);
     vkCmdSetFrontFace(cmd, VK_FRONT_FACE_CLOCKWISE);
-    vkCmdBindVertexBuffers(cmd, 0, 1, &f->vbuf, &voff);
+    vkCmdBindVertexBuffers(cmd, 0, 2, vbufs, voffs);
 
     PvrPush push = {.scale = {2.0f / (gw + 2 * xoff), 2.0f / gh}, .zscale = 1.0f / (maxz * 1.0001f)};
     push.pad[0] = xoff;  /* the shader's xoff */
@@ -1573,7 +1601,7 @@ void renderer_draw(const PvrFrame *pf) {
             vkCmdSetViewport(cmd, 0, 1, &avp);
             vkCmdSetScissor(cmd, 0, 1, &afull);
             vkCmdSetFrontFace(cmd, VK_FRONT_FACE_CLOCKWISE);
-            vkCmdBindVertexBuffers(cmd, 0, 1, &f->vbuf, &voff);
+            vkCmdBindVertexBuffers(cmd, 0, 2, vbufs, voffs);
             draw_polys(cmd, pf, sets, tr_order, ntr, autosort, apush, afull, 0, aw, gh, ATLAS_W, ATLAS_H, 0, atlas, k);
             vkCmdEndRendering(cmd);
             barrier(cmd, R.atlas_img[k].image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
@@ -1596,7 +1624,7 @@ void renderer_draw(const PvrFrame *pf) {
     vkCmdBeginRendering(cmd, &ri);
     vkCmdSetScissor(cmd, 0, 1, &full);
     vkCmdSetFrontFace(cmd, VK_FRONT_FACE_CLOCKWISE);
-    vkCmdBindVertexBuffers(cmd, 0, 1, &f->vbuf, &voff);
+    vkCmdBindVertexBuffers(cmd, 0, 2, vbufs, voffs);
     if (next) {
         float sx = (float)W / (gw + 2 * xoff), sy = (float)H / gh;  /* render target pixels per guest pixel */
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, R.ext_pipeline);

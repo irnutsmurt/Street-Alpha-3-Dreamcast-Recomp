@@ -78,6 +78,8 @@
 #define FLOOR_Q 0x8C188A08u          /* (camera - middle) / a stage's constant, 16.16 (f_8C0223AA) */
 #define FLOOR_A 0x8C188A5Cu          /* that x a second constant */
 #define FLOOR 0x8C1889ECu            /* the floor's block (+0x1C is FLOOR_Q, +0x70 FLOOR_A) */
+#define STAGE_BLOCKS 0x8C188818u     /* layers 1, main, 3 and the floor's blocks, 0x9C bytes each */
+#define STAGE_BLOCKS_SIZE (4 * 0x9Cu)
 #define WIDE_LEFT 4096.0f            /* the left margin's layouts, this far right (vk_renderer.c moves them back) */
 
 static const uint32_t s_layers[3] = {0x8C188818u, MAIN_LAYER, 0x8C188950u};  /* objects' layers 1, 2, 3 */
@@ -271,8 +273,8 @@ static const View *view(void) {
     return v;
 }
 
-static void layout_px(uint8_t which, const View *v, const int32_t *dx, float px, int flat);
-static void layout(uint8_t which, const View *v, const int32_t *dx, int ds);
+static void layout_px(uint8_t which, const View *v, const int32_t *dx, float px, int flat, int extra);
+static void layout(uint8_t which, const View *v, const int32_t *dx, int ds, int extra);
 
 /* ---------------- filler (wide_filler.c) ----------------
  * Once a stage's fight is on screen, each layer is laid out once more over the part of its map the 4:3 and 16:9
@@ -557,7 +559,7 @@ static void capture_one(uint8_t en) {
         int32_t dx[3] = {0, 0, 0};
         dx[k] = (int32_t)((x0 + seg * VIEW - x) * 65536.0);
         if (s_layers[k] == MAIN_LAYER) dx[k] = (int32_t)((x0 + seg * VIEW - fx(s_layers[k] + 0x10)) * 65536.0);
-        layout_px(s_bits[k], NULL, dx, ATLAS_X + (float)(k * CAP_SEGMENTS + seg) * ATLAS_SLOT, 1);
+        layout_px(s_bits[k], NULL, dx, ATLAS_X + (float)(k * CAP_SEGMENTS + seg) * ATLAS_SLOT, 1, 1);
         g = saved;
     }
 }
@@ -785,8 +787,13 @@ void f_8C01EBA8_orig(void);
 #define MAP 1024
 
 /* lays out `which` layers (main +0x7B bits) as the view v has them (or as the game does, v NULL; no floor share,
- * flat), each layer's X dx[k] (16.16) further right, all drawn px guest pixels further right */
-static void layout_px(uint8_t which, const View *v, const int32_t *dx, float px, int flat) {
+ * flat), each layer's X dx[k] (16.16) further right, all drawn px guest pixels further right. A layout steps some
+ * stages' animations as it goes (0A's and 1E's layers 1 and 3, +0x3C and +0x83; 15's layer 1): an extra one (the
+ * margins, the captures: all but the view's own) leaves the stage's blocks as it found them, so they step once a
+ * frame, as in the 4:3 game (in 0.2.8 they stepped three times a frame: 0A's rain and lightning ran fast) */
+static void layout_px(uint8_t which, const View *v, const int32_t *dx, float px, int flat, int extra) {
+    uint8_t blocks[STAGE_BLOCKS_SIZE];
+    if (extra) memcpy(blocks, ram_ptr(STAGE_BLOCKS), sizeof blocks);
     uint32_t x[3], off = R32(SCREEN_OFFSET_X), q = R32(FLOOR_Q), a = R32(FLOOR_A);
     uint8_t enabled = R8(MAIN_LAYER + 0x7B);
     for (int k = 0; k < 3; k++) {
@@ -811,6 +818,7 @@ static void layout_px(uint8_t which, const View *v, const int32_t *dx, float px,
     W32(FLOOR_Q, q);
     W32(FLOOR_A, a);
     for (int k = 0; k < 3; k++) W32(s_layers[k] + 0x10, x[k]);
+    if (extra) memcpy(ram_ptr(STAGE_BLOCKS), blocks, sizeof blocks);
 }
 
 /* Testing (control command "probe <what> <x>"): one layer alone, the picture showing its map from x on (a
@@ -832,7 +840,7 @@ static int probe(void) {
     for (int j = -1; j <= 1; j++) {
         int32_t d[3] = {0, 0, 0};
         d[k] = (dx + j * VIEW) * 0x10000;
-        layout(which, NULL, d, j * VIEW);
+        layout(which, NULL, d, j * VIEW, 1);
         g = saved;
     }
     return 1;
@@ -843,8 +851,8 @@ static int probe(void) {
  * (f_8C0E0E9C), so left of 0 it would round the other way from the view's own tiles; and one pixel further left: at
  * a wall the stage's edge is a fraction of a pixel past the picture's (64 units: 106.67 pixels), which the rounding
  * would leave uncovered (the left margin's tiles reach into the view, which is drawn over them: no seam) */
-static void layout(uint8_t which, const View *v, const int32_t *dx, int ds) {
-    layout_px(which, v, dx, (float)ds * 640.0f / VIEW + (ds < 0 ? WIDE_LEFT - 1.0f : 0), 0);
+static void layout(uint8_t which, const View *v, const int32_t *dx, int ds, int extra) {
+    layout_px(which, v, dx, (float)ds * 640.0f / VIEW + (ds < 0 ? WIDE_LEFT - 1.0f : 0), 0, extra);
 }
 
 static void stage_layout(void) {
@@ -896,7 +904,7 @@ static void stage_layout(void) {
             if (side > 0 && at + VIEW + s_margin > MAP && MAP - s_margin - at >= s_margin) shift = MAP - s_margin - at;
             int32_t dx[3] = {v->dx[0], v->dx[1], v->dx[2]};
             dx[k] += side * shift * 0x10000;
-            layout((uint8_t)(s_bits[k] | (k == 1 ? enabled & 8 : 0)), v, dx, side * shift);
+            layout((uint8_t)(s_bits[k] | (k == 1 ? enabled & 8 : 0)), v, dx, side * shift, 1);
             g = saved;
         }
     if (ext_mode()) {  /* a new stage's layers captured for the filler analysis (before the view: what the
@@ -906,8 +914,8 @@ static void stage_layout(void) {
         g = saved;
         g_perf.wide_ns += SDL_GetTicksNS() - t0;
     }
-    layout(enabled & 0x0F, v, v->dx, 0);  /* the view itself last: what the layout leaves behind is the
-                                                     * view's, as the game expects */
+    layout(enabled & 0x0F, v, v->dx, 0, 0);  /* the view itself last: what the layout leaves behind is the
+                                              * view's, as the game expects */
     if (ext_mode()) {
         uint64_t t0 = SDL_GetTicksNS();
         ext_snapshot(v);

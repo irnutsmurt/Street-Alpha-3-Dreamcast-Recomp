@@ -4,6 +4,7 @@ layout(location = 0) in vec3 in_pos;
 layout(location = 1) in vec2 in_uv;
 layout(location = 2) in vec4 in_base;    // unpacked from BGRA8 (ARGB8888 little-endian)
 layout(location = 3) in vec4 in_offset;
+layout(location = 4) in vec4 in_uvbox;   // its polygon's texture coordinates' box (pvr.frag)
 
 layout(push_constant) uniform PC {
     vec2 scale;        // 2/width, 2/height of the guest framebuffer
@@ -18,6 +19,7 @@ layout(push_constant) uniform PC {
 layout(location = 0) out vec2 v_uv;
 layout(location = 1) out vec4 v_base;
 layout(location = 2) out vec4 v_offset;
+layout(location = 3) flat out vec4 v_uvbox;
 
 void main() {
     float invw = max(in_pos.z, 1e-8);
@@ -28,4 +30,5 @@ void main() {
     v_uv = in_uv;
     v_base = in_base;
     v_offset = in_offset;
+    v_uvbox = in_uvbox;
 }

@@ -275,6 +275,18 @@ TABLES = [
                                     "continue (8C0684F2; the 3 handlers at 8C0BE530 come before it)"),
     T(0x8C0C0E04, 2, None, note="pre-fight dialogue: a speaker's face, a SELECT.PAC bank 8 part (8C06A948); "
                                 "the PSP's 0x226098 (screens.py)"),
+    # --- the arcade world map (0.2.9): its strips of the route's opponents, SELECT.PAC bank 8 parts by
+    # character (screens.py; the PSP's numbers differ, so the exact-match scans missed them). A beaten new
+    # character read the next table's code pointers: part 0xC06 and on, past the bank (a crash) ---
+    T(0x8C0C1BEC, 2, None, note="the world map: a beaten opponent's name (f_8C06E54A, f_8C06E3D8, f_8C06E496); "
+                                "the PSP's 0x227190"),
+    # read by stage number (24 entries) and by character from entry 24 on (f_8C06E6F0: the player's own
+    # name), one literal: moved whole, the characters' new entries after the Dreamcast's 62
+    T(0x8C0C1C48, 2, None, count=62, entries=66,
+      note="the world map: 24 parts by stage, then the player's name by character (f_8C06E6F0); the PSP's 0x2271F4"),
+    # --- World Tour (0.2.9): two more copies of the banner table (worldtour.py) ---
+    T(0x8C0ABDE0, 2, None, note="World Tour: the banner's first part again (f_8C0372BA)"),
+    T(0x8C0ABE2C, 2, None, note="World Tour: a banner part (f_8C0373A0); the PSP's 0x2C8A14"),
 ]
 
 

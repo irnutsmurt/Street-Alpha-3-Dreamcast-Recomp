@@ -18,6 +18,10 @@ import sprites
 NEW = (0x26, 0x27, 0x28, 0x29)
 BANNERS = 0x8C0AB7D0      # u16 per character: the first of its banner's 3 parts
 PSP_BANNERS = 0x2C89C0
+# two more tables of the banner's parts by character (0.2.9), on other screens: the first part again
+# (8C0ABDE0, f_8C0372BA) and another (8C0ABE2C, f_8C0373A0; the PSP's 0x2C8A14: the new characters' third)
+BANNERS_AGAIN = 0x8C0ABDE0
+BANNER_PART, PSP_BANNER_PART = 0x8C0ABE2C, 0x2C8A14
 PARTS_PER = 3
 PARTS_ROOM, TILES_ROOM = 0x4000, 0x30000
 TILES_SIZE = (0x8C01C520, 0x8C01C600)   # the allocations' size (chartables.IMMEDIATES)
@@ -35,6 +39,10 @@ def build(dc_world, psp_world, boot):
         first = [db.add_part(pb, base + k) for k in range(PARTS_PER)]
         assert first == list(range(first[0], first[0] + PARTS_PER)), first
         patches.append((tables[BANNERS].ext + 2 * c, struct.pack("<H", first[0])))
+        patches.append((tables[BANNERS_AGAIN].ext + 2 * c, struct.pack("<H", first[0])))
+        k = struct.unpack_from("<H", boot, PSP_BANNER_PART + 0x74 + 2 * c)[0] - base
+        assert 0 <= k < PARTS_PER, (hex(c), k)
+        patches.append((tables[BANNER_PART].ext + 2 * c, struct.pack("<H", first[k])))
     d[4], d[5] = db.encode()
     assert len(d[4]) <= PARTS_ROOM, len(d[4])
     room = (len(d[5]) + 0xFFF) & ~0xFFF

@@ -811,6 +811,38 @@ each stage layout's state (wide or not, the extensions' positions) goes with
 the TA list that holds its polygons (`ta.c`, `widescreen_list_begin`): the
 first 16:9 frame of a fight, a hit's screen shake.
 
+A layout steps some stages' animations as it goes: the layer blocks' +0x3C
+and +0x83 count down a call on 0A's and 1E's layers 1 and 3 (the storm's
+sky and its lightning) and 15's layer 1. A wide fight lays the stage out
+seven times a frame (each margin, layer by layer, then the view), and in
+0.2.8 those counters stepped three times a frame. Every layout but the
+view's own puts the four blocks (`8C188818`, 4 x `0x9C`) back as it found
+them (`layout_px`), so they step once a frame as in 4:3. Checked with a
+RAM diff around the margins' layouts on all 38 stages: those were the only
+lasting writes (the rest: the floor's vertex scratch at `8C1CFE98`, the
+stack). The extra layouts' polygons (0A at 16:9: about 2,000 a frame against
+850) each looked up their texture, and a paletted one was hashed whole each
+time (palette writes aren't tracked): 57 MB a frame on 0A, 10 ms of the
+renderer's time, which left no room in the frame and the game ran at half
+speed. A texture is checked once a render now (`get_texture`: the guest is
+stopped while the renderer runs).
+
+The game puts a quad's corners a hair past whole pixels and its texture
+coordinates a hair past whole texels (27.0001; 0.2501 of a 64-texel texture
+is 16.0064 at a 16-texel tile's right edge). At 640x480 no pixel centre comes
+within that hair of an edge; at a fractional scale (2160 is 4.5 times 480)
+whole guest pixels land on render pixel centres, and the centre just inside
+a quad's edge took the next tile's texels: a one-pixel line down the quad,
+coming and going as a sprite moves (on the right edges of the unmirrored:
+player 1). The renderer gives each vertex its polygon's texture coordinate
+box (`uv_boxes`), and a point-sampled polygon keeps to the texels it covers
+more than an eighth of (`pvr.frag`, `F_TEXEL_BOX`): at whole scales no
+sample changes (4:3 against 0.2.6 and 16:9 against 0.2.8 at 1440: the same
+pixels). Not fixed by it: a seam in the left margin of 16:9 fights, at any
+scale, where the view's own tiles (laid out past the 4:3 screen's left edge)
+end over the margin's layout of the same layer, which sits a pixel or two
+left of them.
+
 Stages and their layers' rates, for reference (layer 1 / main / layer 3):
 the main layer moves at 1 on 0A and 1E, at the floor's share less on the
 rest; layers 1 and 3 from 0.09 (0F) to 1 (06). A far layer of rate r has
