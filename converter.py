@@ -171,8 +171,9 @@ def default_install():
 
 
 class App:
-    def __init__(self, root, after_update=None):
+    def __init__(self, root, after_update=None, update_failed=False):
         self.root = root
+        self.update_failed = update_failed  # started again by the update's helper, which had to undo it
         self.events = queue.Queue()
         self.worker = None
         self.game = None
@@ -190,7 +191,7 @@ class App:
         self.subtitle.pack(anchor="w", **pad)
 
         self.update_bar = ttk.Frame(root)  # shown when a newer version of this app is out
-        self.update_label = ttk.Label(self.update_bar, style="Link.TLabel")
+        self.update_label = ttk.Label(self.update_bar, style="Link.TLabel", wraplength=470)
         self.update_label.pack(side="left")
         self.update_btn = ttk.Button(self.update_bar, text="Get it", command=self.get_new_app)
         self.update_btn.pack(side="left", padx=8)
@@ -470,7 +471,9 @@ class App:
                     self.steam_btn.config(state="normal")
                 elif ev[0] == "app-update":
                     self.new_app = ev[1]
-                    self.update_label.config(text=f"Version {ev[1][0]} of this app is available.")
+                    self.update_label.config(text=f"Version {ev[1][0]} of this app is available." + (
+                        " The last try couldn't replace this app's files (something still had them open): "
+                        "close anything else running from its folder and try again." if self.update_failed else ""))
                     self.update_bar.pack(after=self.subtitle, anchor="w", padx=12, pady=(0, 4))
                 elif ev[0] == "app-progress":
                     self.update_label.config(text=ev[1])
@@ -615,7 +618,7 @@ def main():
     if len(sys.argv) == 4 and sys.argv[1] == "--after-update":  # started by the previous version
         after = {"old": sys.argv[2], "install": sys.argv[3]}
     root = tk.Tk()
-    App(root, after_update=after)
+    App(root, after_update=after, update_failed=sys.argv[1:] == ["--update-failed"])
     root.mainloop()
 
 
