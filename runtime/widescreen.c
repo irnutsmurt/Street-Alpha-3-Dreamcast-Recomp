@@ -48,7 +48,7 @@
  * sprites' screen positions), and netplay.c compares the two players' RAM
  * to catch a desync. The game's state is the same either way (tested: the
  * same inputs, the fighters, game state and random number the same, frame
- * for frame).
+ * for frame), but for Cody's run off the screen at a match's end (below).
  *
  * The background layers: 8C188818, 8C1888B4 (the main one, the camera) and
  * 8C188950 (objects' layers 1, 2 and 3), 0x9C bytes each; +0x10 the scroll X
@@ -994,4 +994,51 @@ void hle_scroll_object(void) {
         }
     }
     W16(ctx + 0x6C, R16(ctx + 0x6C) + (uint32_t)d);
+}
+
+/* ---------------- Cody's run off the screen ----------------
+ * His match win poses 5 and 6 (PL1B: f_8C8001A8's steps, f_8C800312's) run him off the screen, a policeman
+ * (object 27, f_8C805146's steps) after him: Cody's next step, and his bit in 8C17FC6B (a winner's pose done), once
+ * his X is 64 units past either edge of the 4:3 screen (f_8C800278: X less the screen's left, + 64, outside
+ * 0 - 0x1FF). Then 5 keeps him there, running in place, on the side he faces (f_8C8002E8: the screen's left - 64 or
+ * its right + 64); 6 waits there until the policeman's gone and runs back in, where a second one (f_8C805348's)
+ * comes at him and is knocked away. A policeman is taken away 80 units past the screen's edges (f_8C805238
+ * running, f_8C805410 knocked away: his +4 on to the end). In the wide view those places are in the picture: the
+ * tests and the place are the picture's edges (recompile.py's OVERLAY_HOOKS: the three player slots' copies). The
+ * game's state then differs from 4:3's after such a win (a CPU Cody's moves on to the next screen a few frames
+ * later); online games are 4:3. */
+#define POSE_DONE 0x8C17FC6Bu
+
+static int picture_edges(int *left, int *right) {  /* the wide picture's, in the fighters' units (0: not wide) */
+    if (!fighting()) return 0;
+    int s = (int)(((int32_t)R32(MAIN_LAYER + 0x10) + view()->dx[1]) >> 16);  /* where its 4:3 part starts */
+    *left = s - s_margin, *right = s + VIEW + s_margin;
+    return 1;
+}
+
+/* an object's X is in the wide picture, or less than <past> units past its edges */
+static int in_picture(uint32_t obj, int past) {
+    int left, right, x = (int16_t)R16(obj + 0x12);
+    return picture_edges(&left, &right) && x >= left - past && x < right + past;
+}
+
+void hle_cody_run_off(void (*orig)(void)) {
+    uint32_t f = g.r[4], step = R8(f + 7), done = R8(POSE_DONE), bit = 1u << (R8(f + 0x131) & 7);
+    orig();
+    if (R8(f + 7) == step || !in_picture(f, 64)) return;
+    W8(f + 7, step);  /* off the 4:3 screen but still in the picture: running on */
+    W8(POSE_DONE, (R8(POSE_DONE) & ~bit) | (done & bit));
+}
+
+void hle_cody_kept_off(void (*orig)(void)) {
+    uint32_t f = g.r[4];
+    int left, right;
+    orig();
+    if (picture_edges(&left, &right)) W16(f + 0x12, (uint32_t)(R8(f + 0x0B) ? right + 64 : left - 64));
+}
+
+void hle_cody_cop_off(void (*orig)(void)) {
+    uint32_t o = g.r[4], step = R8(o + 4);
+    orig();
+    if (R8(o + 4) != step && in_picture(o, 80)) W8(o + 4, step);  /* still in the picture: not taken away yet */
 }

@@ -128,7 +128,8 @@ static void scripted_input(PadState *st) {
  *   dumpat <frame> <n>        the same for dumprender (n renders from that vblank on)
  *   mark <file>               create the file (the commands before it are done)
  *   shotp                     screenshot of the presented window image
- *   menu <toggle|up|down|left|right|accept|back>  drive the settings menu */
+ *   menu <toggle|up|down|left|right|accept|back>  drive the settings menu
+ *   vpad <a|b|back|start...> [frames]  a virtual gamepad's button (attached on first use) */
 int g_shot_request, g_shot_present_request;
 #define CTL_QUEUE 512
 static char s_ctl_queue[CTL_QUEUE][256];
@@ -169,6 +170,11 @@ static uint32_t button_bit(const char *name) {
     return bits;
 }
 
+/* "vpad <SDL gamepad button> [frames]": a virtual gamepad, attached on first use and opened like a real one, with
+ * that button (a, b, back, start...) held for frames (default 6): the controller's own paths (testing) */
+static SDL_Joystick *s_vjoy;
+static int s_vbtn = -1, s_vframes;
+
 static void control_file(PadState *st) {
     static const char *path;
     static int init;
@@ -190,6 +196,7 @@ static void control_file(PadState *st) {
         remove(path);
     }
     for (int p = 0; p < 2; p++) ctl_apply(&st[p], s_ctl_held[p]);
+    if (s_vframes > 0 && --s_vframes == 0) SDL_SetJoystickVirtualButton(s_vjoy, s_vbtn, false);
     if (s_shot_n > 0 && g_vblank_count >= s_shot_from) g_shot_request = 1, s_shot_n--;
     if (s_dump_at_n > 0 && g_vblank_count >= s_dump_at) {
         void renderer_dump_next(int n);
@@ -275,6 +282,22 @@ static void control_file(PadState *st) {
     } else if (!strcmp(cmd, "mode")) {  /* mode <id>: the Mode Menu starts this game mode next time it runs */
         void lobby_queue_mode(int mode);
         lobby_queue_mode(atoi(arg));
+    } else if (!strcmp(cmd, "vpad")) {
+        if (!s_vjoy) {
+            SDL_VirtualJoystickDesc d;
+            SDL_INIT_INTERFACE(&d);
+            d.type = SDL_JOYSTICK_TYPE_GAMEPAD;
+            d.naxes = SDL_GAMEPAD_AXIS_COUNT;
+            d.nbuttons = SDL_GAMEPAD_BUTTON_COUNT;
+            d.name = "test gamepad";
+            s_vjoy = SDL_OpenJoystick(SDL_AttachVirtualJoystick(&d));
+        }
+        SDL_GamepadButton b = SDL_GetGamepadButtonFromString(arg);
+        if (s_vjoy && b != SDL_GAMEPAD_BUTTON_INVALID) {
+            if (s_vframes > 0) SDL_SetJoystickVirtualButton(s_vjoy, s_vbtn, false);
+            s_vbtn = b, s_vframes = n > 0 ? n : 6;
+            SDL_SetJoystickVirtualButton(s_vjoy, b, true);
+        }
     } else if (!strcmp(cmd, "key")) {  /* key <SDL key name>: a key press event (testing CONTROLS) */
         const char *t = strchr(line, ' ');
         SDL_Event ev = {0};

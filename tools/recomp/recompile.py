@@ -35,6 +35,7 @@ HOOKS = {
     0x8C07CE14: "hle_pause_buttoncfg_p2",
     # the title screen: Back / Esc ask QUIT GAME?
     0x8C0625E0: "hle_title_logic",
+    0x8C062350: "hle_title_text",  # a title's PRESS START BUTTON: the intro's last scene too (title_quit.c)
     # the pause menu during a fight: DISPLAY added
     0x8C02EB8C: "hle_pause_logic",
     0x8C02EE26: "hle_pause_draw",
@@ -80,8 +81,20 @@ REPLACE = {0x8C0191E4: _RIGHT, 0x8C0191F2: _LEFT, 0x8C019578: _RIGHT, 0x8C019586
            0x8C024776: "g.r[4] += 64u + (uint32_t)g_wide_units;",
            0x8C024778: "g.r[3] = 0x00000200u + 2u * (uint32_t)g_wide_units;"}
 
+# Character code hooked the same way, by its function's name (a character's code is in each player slot, A B C,
+# 0x14000 apart): <name> calls the hook with <name>_orig, the original. Widescreen (runtime/widescreen.c): Cody's
+# match win poses that run off the screen, the test (+0x278) and where he's kept off it (+0x2E8), and the
+# policeman's going off it (+0x5238 running, +0x5410 knocked away).
+OVERLAY_HOOKS = {}
+for _slot in range(3):
+    _at = OVERLAY_BASE + _slot * OVERLAY_SLOT
+    OVERLAY_HOOKS[f"f_{_at + 0x278:08X}_PL1B{'ABC'[_slot]}"] = "hle_cody_run_off"
+    OVERLAY_HOOKS[f"f_{_at + 0x2E8:08X}_PL1B{'ABC'[_slot]}"] = "hle_cody_kept_off"
+    OVERLAY_HOOKS[f"f_{_at + 0x5238:08X}_PL1B{'ABC'[_slot]}"] = "hle_cody_cop_off"
+    OVERLAY_HOOKS[f"f_{_at + 0x5410:08X}_PL1B{'ABC'[_slot]}"] = "hle_cody_cop_off"
+
 # Hooked functions whose original body is still emitted, as <name>_orig.
-KEEP_ORIGINAL = {0x8C01A08E, 0x8C01EBA8, 0x8C0253F8, 0x8C017900, 0x8C024AD4, 0x8C0218B6, 0x8C058516, 0x8C06443C, 0x8C05206E, 0x8C0520F0, 0x8C052180, 0x8C052268, 0x8C069D34, 0x8C069DCC, 0x8C0126F4, 0x8C012C80, 0x8C018E9C, 0x8C069D64, 0x8C018084, 0x8C01348E, 0x8C07AF3C, 0x8C07D988, 0x8C0625E0, 0x8C02EB8C, 0x8C02EE26, 0x8C07B7B4, 0x8C07D2E0, 0x8C07CD5A, 0x8C07CE14, 0x8C094510, 0x8C0100BC, 0x8C07BC42, 0x8C07E17C, 0x8C06273C}
+KEEP_ORIGINAL = {0x8C01A08E, 0x8C01EBA8, 0x8C0253F8, 0x8C017900, 0x8C024AD4, 0x8C0218B6, 0x8C058516, 0x8C06443C, 0x8C05206E, 0x8C0520F0, 0x8C052180, 0x8C052268, 0x8C069D34, 0x8C069DCC, 0x8C0126F4, 0x8C012C80, 0x8C018E9C, 0x8C069D64, 0x8C018084, 0x8C01348E, 0x8C07AF3C, 0x8C07D988, 0x8C0625E0, 0x8C062350, 0x8C02EB8C, 0x8C02EE26, 0x8C07B7B4, 0x8C07D2E0, 0x8C07CD5A, 0x8C07CE14, 0x8C094510, 0x8C0100BC, 0x8C07BC42, 0x8C07E17C, 0x8C06273C}
 
 
 def extra_entries():
@@ -205,7 +218,13 @@ def run(disc_dir, out_dir, report=None, progress=None):
                 main_refs.add(t)
         for a in sorted(good):
             f = good[a]
-            ovl_parts.append((names[a], gen_function(f, oimg, names)))
+            if names[a] in OVERLAY_HOOKS:
+                orig = dict(names)
+                orig[a] = names[a] + "_orig"
+                ovl_parts.append((names[a], f"void {names[a]}(void) {{ {OVERLAY_HOOKS[names[a]]}({orig[a]}); }}\n\n"
+                                  + gen_function(f, oimg, orig)))
+            else:
+                ovl_parts.append((names[a], gen_function(f, oimg, names)))
             sig = odata[a - base:a - base + fn_extent(f)]
             ovl_funcs.append((a, names[a], sig))
         what = f"character {fname[2:4]} part {fname[4]}" if fname.startswith("PL") else f"ending {fname[3:5]}"
@@ -226,6 +245,8 @@ def run(disc_dir, out_dir, report=None, progress=None):
     protos += [f"void {n}(void);" for n in sorted(all_names)]
     protos += [f"void {h}(void);" for h in sorted(set(HOOKS.values()))]
     protos += [f"void {names[a]}_orig(void);" for a in sorted(KEEP_ORIGINAL)]
+    protos += [f"void {h}(void (*orig)(void));" for h in sorted(set(OVERLAY_HOOKS.values()))]
+    protos += [f"void {n}_orig(void);" for n in sorted(OVERLAY_HOOKS) if n in all_names]
     write_if_changed(os.path.join(out_dir, "funcs.h"), "\n".join(protos) + "\n")
 
     entries = sorted(good)

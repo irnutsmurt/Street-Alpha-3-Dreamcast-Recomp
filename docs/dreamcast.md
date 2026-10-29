@@ -843,6 +843,34 @@ scale, where the view's own tiles (laid out past the 4:3 screen's left edge)
 end over the margin's layout of the same layer, which sits a pixel or two
 left of them.
 
+The game is still played on the 4:3 screen: the wide view only draws more of
+it, so what the game does "off the screen" can be in the picture. The
+screen's left edge is the fighter's layer's +0x12 (`f_8C024698(obj)`:
+`8C0A6384[obj +0x0E]`, the main layer for fighters), and "off it" is 64 units
+past either edge (X less that, + 64, outside 0 - 0x1FF). Cody's match win
+poses 5 and 6 (fighter +0x294, picked from `8C80E1E4` once `8C17FC65` is set;
+`f_8C8001A8` and `f_8C800312`, PL1B) run him off the screen
+(`f_8C800278`: velocity +0x50, acceleration +0x58, until he's off it; then
+the next step and his bit in `8C17FC6B`, a winner's pose done, which on a
+CPU win starts the next screen); 5 then keeps him there each frame, running
+in place, by the side he faces (+0x0B; `f_8C8002E8`: the left - 64 or the
+right + 64), and 6 waits there (until fighter +0x5C is cleared) and runs
+back in to the screen's middle (`f_8C80039E`). A policeman (object 27, pool
+32 x 0xB0 down from `8C1847F8`, +0x48 Cody) runs in after him from 300 units
+off the screen, stops 64 units inside it, then runs off (`f_8C805238`) and is
+taken away 80 units past either edge (+4 on to the end, `f_8C8052AE`, which
+clears Cody's +0x5C); in 6 a second one comes in from the other side (screen
+left + 736 or - 352, `f_8C8052D0`), Cody's punch knocks him away
+(`f_8C8053A4`) and he's taken away the same way (`f_8C805410`). At 16:9
+those places are in the picture (at a wall, 64 units inside it; the
+policeman vanished in view): `hle_cody_run_off`, `hle_cody_kept_off` and
+`hle_cody_cop_off` (`recompile.py` OVERLAY_HOOKS: each player slot's copy,
+the original passed in) use the picture's edges instead, so they run on
+until they're out of it, and a CPU Cody's win moves on a few frames later
+than at 4:3.
+Other characters' objects taken away 64 units off the screen (Balrog's and
+Karin's PL15/PL25/PL1D, the same test) are left as they are.
+
 Stages and their layers' rates, for reference (layer 1 / main / layer 3):
 the main layer moves at 1 on 0A and 1E, at the floor's share less on the
 rest; layers 1 and 3 from 0.09 (0F) to 1 (06). A far layer of rate r has
