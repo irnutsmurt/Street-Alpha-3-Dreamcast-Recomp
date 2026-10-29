@@ -347,6 +347,14 @@ own size fields aren't). Formats (the sound driver is MANATEE.DRV):
 - `WINnn.PAC` section `0x40000000`: one SOSB (16 samples) for every
   character.
 
+The AICA keys slots on and off on a KYONEX write (`runtime/aica.c`
+`key_exec`): every slot with KB set that isn't keyed on is keyed on, every
+one keyed on with KB clear is keyed off. A one-shot sample that has played to
+its end stays keyed on, silent, until the driver keys it off; the driver
+sometimes leaves KB set for a while after a voice, so treating an ended
+sample as free let the next KYONEX (for another slot) play it again: the KO
+call and the round's call now and then twice.
+
 ## File names
 
 `8C09895C`: 271 pointers to file names. `f_8C0126F4(number)` opens
@@ -825,7 +833,15 @@ stack). The extra layouts' polygons (0A at 16:9: about 2,000 a frame against
 time (palette writes aren't tracked): 57 MB a frame on 0A, 10 ms of the
 renderer's time, which left no room in the frame and the game ran at half
 speed. A texture is checked once a render now (`get_texture`: the guest is
-stopped while the renderer runs).
+stopped while the renderer runs). The renderer also adjusted the 16:9
+vertices (the left margin's layouts moved back, the full-width shapes
+widened) in the GPU's vertex buffer, which is mapped write-combined: reading
+it back cost 3 ms a render on 0A here and three times that on a Windows
+PC with an NVIDIA card (draw 11 ms a render: the game dropped renders to
+keep up, 60 game frames a second but 30-45 drawn). They're adjusted in
+ordinary memory now and copied once, and a run of polygons with the same
+texture looks it up once (`get_texture` scans the cache): 0A's 16:9 render
+from 4.6 ms of CPU to 0.9 here.
 
 The game puts a quad's corners a hair past whole pixels and its texture
 coordinates a hair past whole texels (27.0001; 0.2501 of a 64-texel texture
@@ -870,6 +886,44 @@ until they're out of it, and a CPU Cody's win moves on a few frames later
 than at 4:3.
 Other characters' objects taken away 64 units off the screen (Balrog's and
 Karin's PL15/PL25/PL1D, the same test) are left as they are.
+
+Some intros are laid out against the 4:3 screen too: a prop put at its edge
+(its art ends just past it; the rest was never drawn), the fighter on or in
+it and launched to their mark in one step of the intro (+7), the prop then
+leaving and taken away just past the edge. At 16:9 the picture showed the
+prop's cut edge, the fighter waiting where the 4:3 game hides them, and the
+prop vanishing in view. `hle_scroll_object` draws such an intro by the
+picture's edge instead (`s_edge_intros`: character, the prop's object type
+in the pool of 32 x 0xB0 down from `8C1847F8`, owned by the fighter, +0x48,
+or by the prop; the launch step; the mark): the props the margin further out,
+the fighter too until the launch and then by the share of it still to go.
+Only the drawing changes; the game is the 4:3 one's.
+
+- Karin against Guy in his arcade (she's the CPU): her helicopter, PL1D type
+  0x22 (sub-type 0 hers; 1 and 2 its parts, 3 the dust its rotor blows up),
+  put at the screen's left + 336, or + 48 when she's player 1 on the left
+  (`f_8C80280A`); she jumps from its door (`f_8C8001E4`: + 348, + 36) to her
+  mark 60 units in, 1.5 a frame (`f_8C800248`); it flies off and is taken
+  away 64 units past the edge (`f_8C8029C0`).
+- R. Mika: her ring, type 0x16 (sub-type 0x1A), slid in with her on its
+  post to the screen's left + 320; step 3 she jumps to her mark at + 280,
+  and the ring slides back out.
+- Blanka (on the left): the truck he's thrown from, type 0x27 (0 his; 1 and
+  2 its parts, 3 the watermelons), driving off left; he waits at the
+  screen's left - 64 and is launched (step 3) to + 96.
+
+Not covered: Cody against Guy walks in from 48 units off the screen
+(PL1B `f_8C800518`; no prop, several steps).
+
+The screen's own picture (`f_8C017670`, while `8C17FC84` is set: picture
+`8C17FC8B` from `8C099D20`, drawn by `f_8C019B4C` in 32-unit tiles; a
+super's finish is one, with the stage not laid out: main +0x7B 0) is the 4:3
+screen's size, 12 x 7 tiles. At 16:9 it's stretched across the picture: the
+units' scale to pixels (`8C1A31C0` x, `8C1A31C4` y), the screen offset
+(`8C18EF4C`, `8C18EF50`) and what `f_8C015E8C` works out from them in the
+drawing context `8C17BA44` (+0x18 / +0x1C a 16-unit tile's size, +0x20 /
++0x24 and +0x30 / +0x34 a 32-unit one's, +0x28 the right edge) are set for
+it while it's drawn, about the screen's middle.
 
 Stages and their layers' rates, for reference (layer 1 / main / layer 3):
 the main layer moves at 1 on 0A and 1E, at the floor's share less on the

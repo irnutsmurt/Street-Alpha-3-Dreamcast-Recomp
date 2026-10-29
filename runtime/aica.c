@@ -24,6 +24,7 @@ static uint8_t s_regs[0x8000];
 enum { EG_ATTACK, EG_DECAY1, EG_DECAY2, EG_RELEASE, EG_OFF };
 
 typedef struct {
+    int keyed;          /* the slot's key state: on from a key-on until a key-off, whether it still sounds or not */
     int playing;
     int eg_state;
     float env;          /* attenuation 0 (loud) .. 1023 (silent) */
@@ -154,6 +155,7 @@ static void key_on(int ch) {
               (unsigned long long)g_vblank_count, ch, ch_sa(ch), ch_lsa(ch), ch_lea(ch), ch_pcms(ch), ch_lpctl(ch),
               creg(ch, 0x18), creg(ch, 0x10), creg(ch, 0x14), creg(ch, 0x24), creg(ch, 0x28));
     }
+    v->keyed = 1;
     v->playing = 1;
     v->eg_state = EG_ATTACK;
     v->env = 1023;
@@ -172,15 +174,19 @@ static void key_off(int ch) {
         logf_("keyoff vbl=%llu ch=%d pos=%u env=%.0f state=%d", (unsigned long long)g_vblank_count, ch,
               (uint32_t)(v->pos >> 32), v->env, v->eg_state);
     }
+    v->keyed = 0;
     if (v->playing && v->eg_state != EG_OFF) v->eg_state = EG_RELEASE;
 }
 
+/* KYONEX: every slot whose KB is set and isn't keyed on is keyed on, every one keyed on whose KB is clear is keyed
+ * off. A one-shot sample played to its end stays keyed on, silent, until the driver keys it off: the next KYONEX,
+ * for another slot, doesn't start it again (it did: the KO call and the round's call now and then twice) */
 static void key_exec(void) {
     for (int ch = 0; ch < 64; ch++) {
         int kb = (creg(ch, 0x00) >> 14) & 1;
         Voice *v = &s_voice[ch];
-        if (kb && (!v->playing || v->eg_state == EG_RELEASE || v->eg_state == EG_OFF)) key_on(ch);
-        else if (!kb && v->playing) key_off(ch);
+        if (kb && !v->keyed) key_on(ch);
+        else if (!kb && v->keyed) key_off(ch);
     }
 }
 

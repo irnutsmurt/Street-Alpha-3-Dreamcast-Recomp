@@ -1243,6 +1243,10 @@ void renderer_draw(const PvrFrame *pf) {
         atlas = realloc(atlas, sets_cap);
     }
     int atlas_layers = 0;
+    Texture *prev_t = NULL;  /* the last polygon's texture: runs of polygons share one (a stage's tiles), and a texture
+                              * used in this render stays in the cache until the next */
+    uint32_t prev_tcw = 0, prev_tsp = 0;
+    int have_prev = 0;
     for (uint32_t i = 0; i < pf->npolys; i++) {
         const PvrPoly *p = &pf->polys[i];
         atlas[i] = -1;
@@ -1263,7 +1267,8 @@ void renderer_draw(const PvrFrame *pf) {
         }
         sets[i] = R.white_set;
         if (!(p->isp & (1u << 25)) || !p->vertex_count) continue;
-        Texture *t = get_texture(f, p->tcw, p->tsp);
+        Texture *t = have_prev && p->tcw == prev_tcw && p->tsp == prev_tsp ? prev_t : get_texture(f, p->tcw, p->tsp);
+        prev_t = t, prev_tcw = p->tcw, prev_tsp = p->tsp, have_prev = 1;
         if (!t) continue;
         int si = sampler_index(p->tsp);
         if (atlas[i] >= 0) si %= 9;  /* point-sampled: no blends for the analysis */
@@ -1273,12 +1278,20 @@ void renderer_draw(const PvrFrame *pf) {
 
     VkDeviceSize vbytes = pf->nverts * sizeof(PvrVertex), bbytes = pf->nverts * 4 * sizeof(float);
     if (f->vused + ((vbytes + 255) & ~255ull) + bbytes > f->vcap) return;  /* overflow: skip this render */
-    memcpy((uint8_t *)f->vmap + f->vused, pf->verts, vbytes);
+    /* the vertices are adjusted here, in ordinary memory, then copied to the GPU's buffer once: that one is mapped
+     * write-combined (reading it back is very slow: half a 16:9 fight's render time on 0A's 2,000 polygons) */
+    static PvrVertex *vtmp;
+    static uint32_t vtmp_cap;
+    if (vtmp_cap < pf->nverts) {
+        vtmp_cap = pf->nverts * 2;
+        vtmp = realloc(vtmp, vtmp_cap * sizeof *vtmp);
+    }
+    memcpy(vtmp, pf->verts, vbytes);
     float stage_bar;  /* widescreen: the picture's sides a stage's art doesn't reach (widescreen.c) */
     int wide_fight = widescreen_stage_frame(pf->wide_list, &stage_bar) && xoff > 0;  /* a fight's frame, drawn wide */
     if (!widescreen_list_captures(pf->wide_list)) atlas_layers = 0;  /* (only where widescreen.c asked for them) */
     if (wide_fight || atlas_layers) {
-        PvrVertex *vv = (PvrVertex *)((uint8_t *)f->vmap + f->vused);
+        PvrVertex *vv = vtmp;
         for (uint32_t i = 0; i < pf->npolys; i++) {  /* the left margin's stage, laid out 4096 to the right */
             const PvrPoly *p = &pf->polys[i];
             float x0 = 1e9f;
@@ -1317,7 +1330,7 @@ void renderer_draw(const PvrFrame *pf) {
         /* a wide fight: the untextured shapes as wide as the 4:3 screen (the borders at the top and bottom,
          * flashes, the super moves' dimming) as wide as the picture; the game's thin borders at the sides (0 - 0.1
          * and 640 - 640.23, laid out with the stage, so the margins' layouts put more of them about) out of it */
-        PvrVertex *vv = (PvrVertex *)((uint8_t *)f->vmap + f->vused);
+        PvrVertex *vv = vtmp;
         for (uint32_t i = 0; i < pf->npolys; i++) {
             const PvrPoly *p = &pf->polys[i];
             if ((p->isp & (1u << 25)) || p->vertex_count < 3 || atlas[i] >= 0) continue;
@@ -1339,6 +1352,7 @@ void renderer_draw(const PvrFrame *pf) {
             }
         }
     }
+    memcpy((uint8_t *)f->vmap + f->vused, vtmp, vbytes);
     /* 16:9 background extension (widescreen.c, wide_filler.c's wide_extend): each background layer that lacks art in
      * view gets its precomputed fill drawn under the frame (ext.frag) */
     uint64_t ext_t0 = SDL_GetTicksNS();
