@@ -954,6 +954,81 @@ static double own_rate(uint32_t obj) {
     return s_own[i].rate;
 }
 
+/* ---------------- intros played at the screen's edge ----------------
+ * Some intros are laid out against the 4:3 screen: a prop put at its edge (its art ends just past it: the rest was
+ * never drawn), the fighter on or in it, launched to their mark in one step of the intro (+7), and the prop then
+ * leaving, taken away just past the edge. At 16:9 the picture showed the prop's cut edge, the fighter waiting where
+ * the 4:3 game hides them, and the prop vanishing in view. In the wide view all of it is drawn by the picture's
+ * edge instead: the props (an object of the intro's type in pool B that is the fighter's, +0x48, or that prop's)
+ * the margin further out, the fighter too until the launch and then by the share of it still to go. Drawn only:
+ * the game is the 4:3 one's.
+ *  - Karin against Guy, in his arcade (she's the CPU): her helicopter, type 0x22 (sub-type 0 hers; 1 and 2 its
+ *    parts, 3 its rotor's dust), at the screen's left + 336, or + 48 on the left (f_8C80280A); she jumps from its
+ *    door (f_8C8001E4: + 348, + 36) to her mark 60 units in, 1.5 a frame (f_8C800248).
+ *  - R. Mika: her ring, type 0x16 (sub-type 0x1A), slid in with her on its post to the screen's left + 320; she
+ *    jumps to her mark at + 280.
+ *  - Blanka: the truck he's thrown from, type 0x27 (0 his; 1 and 2 its parts, 3 the watermelons), driving off
+ *    past the left edge; he waits at the screen's left - 64 and lands at + 96. */
+#define FIGHTERS 0x8C17FD38u   /* 4 x 0x44C */
+#define POOL_B_LOW 0x8C1832A8u /* f_8C02564C's pool: 32 x 0xB0 down from 8C1847F8 */
+#define POOL_B_END 0x8C1848A8u
+
+typedef struct { uint8_t chara, type, launch; int16_t mark; } EdgeIntro;  /* mark: units from the screen's left, on
+                                                                            * the right (player 1; 384 - it on the left) */
+static const EdgeIntro s_edge_intros[] = {{0x1D, 0x22, 3, 288}, {0x1A, 0x16, 3, 280}, {0x19, 0x27, 3, 288}};
+
+static const EdgeIntro *edge_intro(uint32_t f) {  /* the table's intro f (a fighter) is in, if any */
+    if (f < FIGHTERS || f >= FIGHTERS + 4 * 0x44Cu || (f - FIGHTERS) % 0x44Cu || R8(f + 5) != 7) return NULL;
+    for (unsigned i = 0; i < sizeof s_edge_intros / sizeof s_edge_intros[0]; i++)
+        if (s_edge_intros[i].chara == R8(f + 0x132)) return &s_edge_intros[i];
+    return NULL;
+}
+
+static int in_pool_b(uint32_t o) { return o >= POOL_B_LOW && o < POOL_B_END && (o - POOL_B_LOW) % 0xB0u == 0; }
+
+static uint32_t prop_owner(uint32_t obj) {  /* the fighter whose intro's prop obj is, 0 if none */
+    if (!in_pool_b(obj) || !R8(obj)) return 0;
+    uint32_t o = R32(obj + 0x48);
+    if (in_pool_b(o) && R8(o + 2) == R8(obj + 2)) o = R32(o + 0x48);
+    const EdgeIntro *e = edge_intro(o);
+    return e && e->type == R8(obj + 2) ? o : 0;
+}
+
+static int has_prop(uint32_t f, uint8_t type) {
+    for (uint32_t o = POOL_B_LOW; o < POOL_B_END; o += 0xB0u)
+        if (R8(o) && R8(o + 2) == type && R32(o + 0x48) == f) return 1;
+    return 0;
+}
+
+static int edge_intro_shift(uint32_t obj) {  /* units further right to draw obj */
+    static int16_t launch_d[4];  /* each fighter's distance out from the screen's middle as the launch began */
+    static uint8_t launching[4];
+    uint32_t f = prop_owner(obj);
+    if (f) return R8(f + 0x131) ? s_margin : -s_margin;
+    const EdgeIntro *e = edge_intro(obj);
+    unsigned k = (obj - FIGHTERS) / 0x44Cu;
+    if (!e) {
+        if (obj >= FIGHTERS && obj < FIGHTERS + 4 * 0x44Cu && (obj - FIGHTERS) % 0x44Cu == 0) launching[k] = 0;
+        return 0;
+    }
+    int right = R8(obj + 0x131) != 0, side = right ? s_margin : -s_margin, step = R8(obj + 7);
+    int s = (int16_t)R16(MAIN_LAYER + 0x12), x = (int16_t)R16(obj + 0x12);
+    int d = right ? x - s - VIEW / 2 : s + VIEW / 2 - x, mark = e->mark - VIEW / 2;  /* out from the middle */
+    if (step < e->launch) {
+        launching[k] = 0;
+        return has_prop(obj, e->type) ? side : 0;
+    }
+    if (step > e->launch) return 0;
+    if (!launching[k]) {
+        if (!has_prop(obj, e->type)) return 0;
+        launching[k] = 1, launch_d[k] = (int16_t)d;
+    }
+    if (launch_d[k] <= mark) return 0;
+    double share = (double)(d - mark) / (launch_d[k] - mark);
+    share = share < 0 ? 0 : share > 1 ? 1 : share;
+    return (int)lround(side * share);
+}
+
 /* f_8C01A08E(ctx, obj): an object's screen position (ctx +0x6C X, +0x6E Y): its own less its scroll layer's X
  * (obj +0x0E: 1-3; 0 fixed to the screen: the HUD's, and the stage's own_rate() ones), plus 8C188A08 x its
  * depth (obj +0x26) on the main layer. In the wide view it moves as its layer does there; an own_rate() one
@@ -992,6 +1067,7 @@ void hle_scroll_object(void) {
             int32_t q = (int32_t)R32(FLOOR_Q), qw = (int32_t)(v->q * 65536.0);
             d += (int16_t)((uint32_t)(qw * depth) >> 16) - (int16_t)((uint32_t)(q * depth) >> 16);
         }
+        if (layer == 2) d += edge_intro_shift(obj);
     }
     W16(ctx + 0x6C, R16(ctx + 0x6C) + (uint32_t)d);
 }
@@ -1041,4 +1117,41 @@ void hle_cody_cop_off(void (*orig)(void)) {
     uint32_t o = g.r[4], step = R8(o + 4);
     orig();
     if (R8(o + 4) != step && in_picture(o, 80)) W8(o + 4, step);  /* still in the picture: not taken away yet */
+}
+
+/* ---------------- the screen's own picture ----------------
+ * f_8C017670 draws a picture over the whole screen while 8C17FC84 is set: 8C17FC8B's composition from 8C099D20
+ * (f_8C019B4C, 32-unit tiles; a super's finish among them, the stage not laid out then: main +0x7B 0). Its art is
+ * the 4:3 screen's size (12 x 7 tiles), so at 16:9 it's stretched across the picture: the units' scale to pixels
+ * (8C1A31C0 x, 8C1A31C4 y), the screen offset (8C18EF4C, 8C18EF50) and what f_8C015E8C works out from them in
+ * the drawing context (8C17BA44: +0x18 / +0x1C a 16-unit tile's size, +0x20 / +0x24 and +0x30 / +0x34 a 32-unit
+ * one's, +0x28 the right edge) set for it while it's drawn, about the screen's middle. Across only (the default),
+ * or both ways (SFA3_SCREEN_PICTURE=1, testing: the same shape, its top and bottom off the picture). */
+#define UNIT_SCALE_X 0x8C1A31C0u
+#define DRAW_CTX 0x8C17BA44u
+static float rf(uint32_t a) { uint32_t u = R32(a); float f; memcpy(&f, &u, 4); return f; }
+static void wf(uint32_t a, float f) { uint32_t u; memcpy(&u, &f, 4); W32(a, u); }
+
+void f_8C017670_orig(void);
+void hle_screen_background(void) {
+    if (!fighting()) { f_8C017670_orig(); return; }
+    static int both = -1;
+    if (both < 0) both = getenv("SFA3_SCREEN_PICTURE") ? atoi(getenv("SFA3_SCREEN_PICTURE")) == 1 : 0;
+    static const uint32_t at[] = {UNIT_SCALE_X, UNIT_SCALE_X + 4, SCREEN_OFFSET_X, SCREEN_OFFSET_X + 4, DRAW_CTX + 0x18,
+                                  DRAW_CTX + 0x1C, DRAW_CTX + 0x20, DRAW_CTX + 0x24, DRAW_CTX + 0x28, DRAW_CTX + 0x30,
+                                  DRAW_CTX + 0x34};
+    uint32_t saved[sizeof at / sizeof at[0]];
+    for (unsigned i = 0; i < sizeof at / sizeof at[0]; i++) saved[i] = R32(at[i]);
+    float k = (float)(VIEW + 2 * s_margin) / VIEW;
+    wf(UNIT_SCALE_X, rf(UNIT_SCALE_X) * k);
+    wf(SCREEN_OFFSET_X, 320.0f + k * (rf(SCREEN_OFFSET_X) - 320.0f));
+    for (unsigned i = 0x18; i <= 0x30; i += 8) if (i != 0x28) wf(DRAW_CTX + i, rf(DRAW_CTX + i) * k);
+    wf(DRAW_CTX + 0x28, rf(SCREEN_OFFSET_X) + VIEW * rf(UNIT_SCALE_X));
+    if (both) {
+        wf(UNIT_SCALE_X + 4, rf(UNIT_SCALE_X + 4) * k);
+        wf(SCREEN_OFFSET_X + 4, 240.0f + k * (rf(SCREEN_OFFSET_X + 4) - 240.0f));
+        for (unsigned i = 0x1C; i <= 0x34; i += 8) if (i != 0x2C) wf(DRAW_CTX + i, rf(DRAW_CTX + i) * k);
+    }
+    f_8C017670_orig();
+    for (unsigned i = 0; i < sizeof at / sizeof at[0]; i++) W32(at[i], saved[i]);
 }

@@ -67,6 +67,7 @@ HOOKS = {
     0x8C0218B6: "hle_ending_setup",  # the ending's setup, its handlers in: the PSP's for the PSP characters' endings (psp_load.c)
     0x8C01A08E: "hle_scroll_object",  # an object's screen position less its scroll layer's: the wide view's (widescreen.c)
     0x8C01EBA8: "hle_stage_layout",   # the fight's background laid out: widescreen draws it wider (widescreen.c)
+    0x8C017670: "hle_screen_background",  # the screen's own picture (a super's finish): stretched at 16:9 (widescreen.c)
 }
 # Instructions given other code (codegen.REPLACE): widescreen (runtime/widescreen.c). The sprite part drawer
 # (f_8C018E9C) skips a tile column past the 4:3 screen's edges, right (ctx +0x28, 640) and left (minus a tile);
@@ -94,7 +95,7 @@ for _slot in range(3):
     OVERLAY_HOOKS[f"f_{_at + 0x5410:08X}_PL1B{'ABC'[_slot]}"] = "hle_cody_cop_off"
 
 # Hooked functions whose original body is still emitted, as <name>_orig.
-KEEP_ORIGINAL = {0x8C01A08E, 0x8C01EBA8, 0x8C0253F8, 0x8C017900, 0x8C024AD4, 0x8C0218B6, 0x8C058516, 0x8C06443C, 0x8C05206E, 0x8C0520F0, 0x8C052180, 0x8C052268, 0x8C069D34, 0x8C069DCC, 0x8C0126F4, 0x8C012C80, 0x8C018E9C, 0x8C069D64, 0x8C018084, 0x8C01348E, 0x8C07AF3C, 0x8C07D988, 0x8C0625E0, 0x8C062350, 0x8C02EB8C, 0x8C02EE26, 0x8C07B7B4, 0x8C07D2E0, 0x8C07CD5A, 0x8C07CE14, 0x8C094510, 0x8C0100BC, 0x8C07BC42, 0x8C07E17C, 0x8C06273C}
+KEEP_ORIGINAL = {0x8C01A08E, 0x8C01EBA8, 0x8C0253F8, 0x8C017900, 0x8C024AD4, 0x8C0218B6, 0x8C058516, 0x8C06443C, 0x8C05206E, 0x8C0520F0, 0x8C052180, 0x8C052268, 0x8C069D34, 0x8C069DCC, 0x8C0126F4, 0x8C012C80, 0x8C018E9C, 0x8C069D64, 0x8C018084, 0x8C01348E, 0x8C07AF3C, 0x8C07D988, 0x8C0625E0, 0x8C062350, 0x8C02EB8C, 0x8C02EE26, 0x8C07B7B4, 0x8C07D2E0, 0x8C07CD5A, 0x8C07CE14, 0x8C094510, 0x8C0100BC, 0x8C07BC42, 0x8C07E17C, 0x8C06273C, 0x8C017670}
 
 
 def extra_entries():
