@@ -12,8 +12,9 @@ The update is applied in place, in this app's own folder:
     stage(url, version)        downloads and unpacks the new version into <app>/.update/
     apply_and_restart(...)     puts it in place and starts it (the caller then exits):
         Linux: replaced right away (a running program's files can be replaced)
-        Windows: a small hidden helper script waits for this app to exit, copies
-        the new files over the old ones and starts the new version
+        Windows: a small hidden helper script waits for this app to exit, moves the
+        old parts aside (each whole, or the update is undone and the old version
+        starts again with --update-failed), moves the new ones in and starts them
 Only the app's own parts are replaced (APP_PARTS), never anything else in the folder.
 """
 import json
@@ -132,22 +133,32 @@ if not errorlevel 1 (
     ping -n 2 127.0.0.1 >nul
     goto wait
 )
-for %%P in (%SFA3_DIRS%) do call :swap "%%~P" dir
-for %%F in (%SFA3_FILES%) do call :swap "%%~F" file
+rem each old part aside first, in one move (a rename: all of it or none), retried while anything still
+rem has a file in it open; if one won't go, the ones moved go back and the old version starts again
+rem (deleting in place could leave half a folder, and moving the new one onto that put it inside)
+mkdir "%SFA3_OLD%" 2>nul
+set SFA3_FAILED=
+for %%P in (%SFA3_PARTS%) do if not defined SFA3_FAILED call :aside "%%~P"
+if defined SFA3_FAILED goto rollback
+for %%P in (%SFA3_PARTS%) do if exist "%SFA3_NEW%\%%~P" move /Y "%SFA3_NEW%\%%~P" "%SFA3_APP%\%%~P" >nul
 start "" "%SFA3_APP%\%SFA3_EXE%" --after-update "" "%SFA3_INSTALL%"
 rmdir /S /Q "%SFA3_APP%\.update"
 goto :eof
 
-rem remove the old part (retrying while anything still holds it), move the new one in
-:swap
+:rollback
+for %%P in (%SFA3_PARTS%) do if exist "%SFA3_OLD%\%%~P" move /Y "%SFA3_OLD%\%%~P" "%SFA3_APP%\%%~P" >nul
+start "" "%SFA3_APP%\%SFA3_EXE%" --update-failed
+goto :eof
+
+:aside
 if not exist "%SFA3_NEW%\%~1" goto :eof
-for /L %%i in (1,1,20) do (
+for /L %%i in (1,1,30) do (
     if exist "%SFA3_APP%\%~1" (
-        if "%~2"=="dir" (rmdir /S /Q "%SFA3_APP%\%~1") else (del /F /Q "%SFA3_APP%\%~1")
+        move "%SFA3_APP%\%~1" "%SFA3_OLD%\%~1" >nul 2>&1
         if exist "%SFA3_APP%\%~1" ping -n 2 127.0.0.1 >nul
     )
 )
-move /Y "%SFA3_NEW%\%~1" "%SFA3_APP%\%~1" >nul
+if exist "%SFA3_APP%\%~1" set SFA3_FAILED=1
 goto :eof
 """
 
@@ -166,7 +177,8 @@ def apply_and_restart(new, app_dir, install):
         with open(helper, "w", newline="\r\n") as f:
             f.write(_HELPER)
         env = dict(os.environ, SFA3_PID=str(os.getpid()), SFA3_NEW=new, SFA3_APP=app_dir, SFA3_EXE=APP,
-                   SFA3_INSTALL=install, SFA3_DIRS=" ".join(dirs), SFA3_FILES=" ".join(files))
+                   SFA3_INSTALL=install, SFA3_PARTS=" ".join(dirs + files),
+                   SFA3_OLD=os.path.join(app_dir, ".update", "old"))
         # a hidden console (its commands share it: no windows flash up), in its own
         # process group so that it outlives this process
         subprocess.Popen(["cmd", "/c", helper], env=env, cwd=os.path.dirname(app_dir),
