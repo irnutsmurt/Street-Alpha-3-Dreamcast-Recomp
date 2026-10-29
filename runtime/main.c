@@ -394,6 +394,10 @@ void video_vblank(void) {
     input_update();
     netplay_tick();
     lobby_autopilot(input_state(0));
+    {
+        void title_quit_input(PadState *p1);
+        title_quit_input(input_state(0));
+    }
     if (netplay_fast_forward())  /* identical on both sides: only the autopilot's controller */
         for (int p = 1; p < 4; p++) *input_state(p) = (PadState){0, 0, 0, 0x80, 0x80};
     netplay_frame();

@@ -6,14 +6,22 @@
  * game's font and colours, the cursor bar and sounds. YES closes the game,
  * as closing the window does. While it is up the title sees no presses and
  * its attract-demo timer stands still. Not in a netplay session (there is no
- * title screen there). */
+ * title screen there).
+ *
+ * The intro's last scene is the same title, drawn by the boot task (where the
+ * game starts up and goes back to from the Mode Menu; SKIP INTRO passes it):
+ * there those buttons press Start for the game, which goes on to the mode
+ * menu's title, and QUIT GAME? opens on it. */
 #include "cpu.h"
 #include "gameui.h"
+#include "input.h"
+#include "netplay.h"
 #include "sprite_swap.h"
 
 extern uint64_t g_vblank_count;
 extern int g_quit_requested;
 void f_8C0625E0_orig(void);
+void f_8C062350_orig(void);
 
 #define TITLE_TIMER 14  /* the title's countdown to the attract demo (16 bits at +14 of its state) */
 /* the DISPLAY screen's string arena (never shown at the same time) */
@@ -33,15 +41,50 @@ void f_8C0625E0_orig(void);
 static uint64_t s_title_frame;
 static int s_open, s_choice;  /* 0 NO, 1 YES */
 static MenuInput s_in;
+/* the intro's title (hle_title_text): when it was last drawn; Back there: Start pressed for the game for these
+ * frames, and the mode menu's title opens QUIT GAME? if it comes within 5 seconds of then */
+static uint64_t s_boot_title_frame, s_open_next;
+static int s_start_frames;
+static MenuInput s_boot_in;
 
-int title_quit_available(void) { return s_title_frame && g_vblank_count - s_title_frame <= 4; }
+static int recent(uint64_t frame) { return frame && g_vblank_count - frame <= 4; }
+int title_quit_available(void) { return recent(s_title_frame) || recent(s_boot_title_frame); }
 int title_quit_open(void) { return s_open; }
+
+static void boot_title_back(void) {
+    if (s_start_frames || netplay_active()) return;
+    s_start_frames = 2;
+    s_open_next = g_vblank_count;
+}
 
 /* Back / Esc (input_sdl.c) */
 void title_quit_toggle(void) {
+    if (!recent(s_title_frame)) {  /* the intro's title */
+        boot_title_back();
+        return;
+    }
     s_open = !s_open;
     s_choice = 0;
     s_in = (MenuInput){0};
+}
+
+/* main.c, the frame's input read: Start, held two frames, for Back on the intro's title */
+void title_quit_input(PadState *p1) {
+    if (s_start_frames <= 0) return;
+    s_start_frames--;
+    *p1 = (PadState){BTN_START, 0, 0, 0x80, 0x80};
+}
+
+/* f_8C062350: a title's PRESS START BUTTON and copyright lines, each frame: the mode menu's title (f_8C0625E0),
+ * the intro's last scene (f_8C073270, returning to 8C073292), the boot's loading screen (copyright lines only) */
+void hle_title_text(void) {
+    if (g.pr == 0x8C073292u) {
+        uint32_t r[4] = {g.r[4], g.r[5], g.r[6], g.r[7]}, pr = g.pr;
+        s_boot_title_frame = g_vblank_count;
+        if (gameui_presses(&s_boot_in, gameui_pad_held(0) | gameui_pad_held(1), 0) & PAD_CANCEL) boot_title_back();
+        g.r[4] = r[0], g.r[5] = r[1], g.r[6] = r[2], g.r[7] = r[3], g.pr = pr;
+    }
+    f_8C062350_orig();
 }
 
 static void no_presses(void) {
@@ -68,6 +111,14 @@ void hle_title_logic(void) {
     s_title_frame = g_vblank_count;
     gameui_begin(TEXT_ARENA, TEXT_ARENA_END, 0x8C0625E0u);
     uint32_t pressed = gameui_presses(&s_in, gameui_pad_held(0) | gameui_pad_held(1), 0);
+    if (s_open_next) {  /* Back on the intro's title, which Start brought here */
+        if (g_vblank_count - s_open_next <= 300 && !s_open) {
+            s_open = 1, s_choice = 0;
+            s_in.prev_held = gameui_pad_held(0) | gameui_pad_held(1);
+            pressed = 0;
+        }
+        s_open_next = 0;
+    }
     if (!s_open) {
         /* B (the gamepad's usual "back") asks too; the title itself has no use for it */
         if (pressed & PAD_CANCEL) {

@@ -370,8 +370,11 @@ void hle_throw_d(void) { throw_table(g.r[4]); f_8C052268_orig(); }
  * those are other parts: the add-on's (tools/psp/hud.py) go in instead. */
 extern const uint16_t g_psp_hud_parts[4][4];  /* per new character: face 1, face 2, name 1, name 2 */
 void f_8C06443C_orig(void);
+extern uint64_t g_vblank_count;
+uint64_t g_hud_frame;  /* the fight HUD's last frame: a fight is on (controls.c) */
 void hle_hud(void) {
     uint32_t hud = g.r[4];
+    g_hud_frame = g_vblank_count;
     f_8C06443C_orig();
     if (!g_psp_hud_parts[0][0]) return;
     static const uint32_t face_at[2] = {52 + 0x280 + 60, 52 + 0x8C0 + 60}, name_at[2] = {0x330, 0x970};

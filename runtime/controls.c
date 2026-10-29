@@ -367,12 +367,25 @@ static void press_control(PadState *st, int p, int a) {
     else press(st, a);
 }
 
+/* Menus (everything but a fight being played) take the controller's A to confirm and B to go back: the
+ * Dreamcast's A and B, which the game's menus read, whatever attacks the two are bound to. In a fight (its HUD
+ * drawn, the pause menu not up) the bindings alone: the game's A is then whichever attack its BUTTON CONFIG
+ * gives it (LIGHT KICK unless changed), so the menus followed that binding before. */
+static int in_fight(void) {
+    extern uint64_t g_vblank_count, g_hud_frame;
+    int pause_menu_up(void);
+    return g_hud_frame && g_vblank_count - g_hud_frame <= 4 && !pause_menu_up();
+}
+
 void controls_read(int port, SDL_Gamepad *const *pads, int text_entry, PadState *st) {
     init();
     s_pads = pads;
     int p = port < 2 ? port : -1;
     SDL_Gamepad *gp = port_pad(port, pads);
     if (gp) {
+        int menu = !in_fight();
+        if (menu && SDL_GetGamepadButton(gp, SDL_GAMEPAD_BUTTON_SOUTH)) st->buttons |= BTN_A;
+        if (menu && SDL_GetGamepadButton(gp, SDL_GAMEPAD_BUTTON_EAST)) st->buttons |= BTN_B;
         static const SDL_GamepadButton dirs[4] = {SDL_GAMEPAD_BUTTON_DPAD_UP, SDL_GAMEPAD_BUTTON_DPAD_DOWN,
                                                   SDL_GAMEPAD_BUTTON_DPAD_LEFT, SDL_GAMEPAD_BUTTON_DPAD_RIGHT};
         for (int a = 0; a < 4; a++)
@@ -381,7 +394,7 @@ void controls_read(int port, SDL_Gamepad *const *pads, int text_entry, PadState 
         st->ay = axis8(SDL_GetGamepadAxis(gp, SDL_GAMEPAD_AXIS_LEFTY));
         for (int a = ACT_FIRST_BUTTON; a < ACT_COUNT; a++) {
             int b = p >= 0 ? s_btn[p][a] : s_default_btn[a], on;
-            if (b == NONE) continue;
+            if (b == NONE || (menu && (b == SDL_GAMEPAD_BUTTON_SOUTH || b == SDL_GAMEPAD_BUTTON_EAST))) continue;
             if (b == PADB_LT || b == PADB_RT)
                 on = SDL_GetGamepadAxis(gp, b == PADB_LT ? SDL_GAMEPAD_AXIS_LEFT_TRIGGER : SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) > 12000;
             else

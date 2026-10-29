@@ -69,6 +69,8 @@ static int s_return_row;              /* the row to come back to (from the MODE 
 static MenuInput s_in;
 static uint64_t s_last_frame;
 
+int pause_menu_up(void) { return s_last_frame && g_vblank_count - s_last_frame <= 4; }
+
 static int paused_player(void) {
     uint8_t bits = R8(GAME_STATE + 89);
     for (int i = 0; i < 3; i++)

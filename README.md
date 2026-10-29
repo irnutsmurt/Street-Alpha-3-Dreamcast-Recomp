@@ -141,11 +141,13 @@ Run `./build/cmake/sfa3`.
 | Enter | Start |
 | U, I, O | X, Y, L trigger (punches) |
 | J, K, L | A, B, R trigger (kicks) |
-| F1 or Esc | display settings overlay (pauses the game, except in netplay); on the title screen Esc asks QUIT GAME? |
+| F1 | settings overlay (pauses the game, except in netplay) |
+| Esc | on the title screen: QUIT GAME? (YES / NO) |
 | F11 or Alt+Enter | fullscreen |
 
-Gamepads work too (Back opens the settings menu; on the title screen it asks
-QUIT GAME?, YES / NO). Default gamepad layout:
+Gamepads work too. In menus A confirms and B goes back, whatever the attacks are
+bound to; on the title screen Back (or B) asks QUIT GAME?, YES / NO. Default
+gamepad layout:
 X / Y / RB = light / medium / heavy punch, A / B / RT = light / medium / heavy kick,
 LB / LT = all three punches / kicks (Xbox names; same positions on other pads).
 
