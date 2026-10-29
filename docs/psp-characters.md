@@ -439,6 +439,30 @@ values; the new characters' lists use 0 and 1): unmoved, Eagle's entry was
 `00FFFFFF` and the scan read from `01000001` up, 130,000 bad reads as his
 first fight began (found by an arcade run with `SFA3_MMIO_BT=01000001`).
 
+Added in 0.2.9 (a crash after Eagle beat Maki in arcade mode: "call to
+unrecompiled address 00000000 from 8C0EDFD0", after `part C06 past bank 8's
+records` and 100,000 bad reads): the world map's strip of the route's
+opponents (`f_8C06E54A`, objects type `0x13`) marks a beaten one with a
+`SELECT.PAC` bank 8 part from `8C0C1BEC`[character] (38 u16, the PSP's
+`0x227190`); for the new characters it read the next table's code pointers,
+`0x8C06` for Maki and Ingrid (part `0xC06` with the last-record flag), and
+the part's chain ran through garbage records. The player's own name there
+(`f_8C06E6F0`) comes from `8C0C1C48`[24 + character]: one table, 24 parts by
+stage then the characters (the PSP's `0x2271F4`), read past its end into the
+next. Both are moved (`8C0C1C48` whole, 62 -> 66 entries) and `screens.py`
+adds the PSP's parts (`0x204`-`0x207`, `0x200`-`0x203`, 64x16) to bank 8.
+Reproduced by poking the route and the beaten-characters mask (fighter
++0x170 / +0x174, a bit per character: `f_8C02C48C`) on the first map:
+0.2.8 stops with the same address and registers as the report. The scans
+above compare entries exactly, and these hold part numbers the PSP
+renumbered (its bank 8 has 73 fewer parts before them):
+build/test/scan_renum.py looks for 38-entry tables the PSP has with 4 more,
+its entries the Dreamcast's plus a constant. It also found two more copies
+of World Tour's banner table, `8C0ABDE0` (`f_8C0372BA`, the first part) and
+`8C0ABE2C` (`f_8C0373A0`, another; the PSP's `0x2C8A14`), whose new entries
+read the next table's (other characters' banners, no crash): moved,
+`worldtour.py` fills them.
+
 Two tables by object type are moved the same way (with no entries added:
 the characters register their handlers as a fight starts, `f_8C046D6E`).
 The new characters' types run past the Dreamcast's ends: written there, a
@@ -492,6 +516,9 @@ garbage. Word 29's overflow went into word 28's table.
 | `8C0AB820`, `8C0C0D26` | 2 | - | the names again (`f_8C036730`, `f_8C06A5A8`) |
 | `8C0C11F4` | 4 | - | select: the name strip down the side: u16 spacing (0x8000: the name 8 up), u16 bank 8 part (`f_8C06B488`); the PSP's are two tables, `0x226914` (u16) and `0x2C8ABC` (u8 + `0xF4` = part) |
 | `8C0C142C`, `8C0C1478` | 2 | - | select: name banner (bank 8 part) and its width |
+| `8C0C1BEC` | 2 | - | the world map: a beaten opponent's name, a bank 8 part (`f_8C06E54A`); the PSP's `0x227190` (screens.py) |
+| `8C0C1C48` | 2 | - | the world map: 24 bank 8 parts by stage, then the player's name by character (entry 24 + c, `f_8C06E6F0`); moved whole (62 -> 66); the PSP's `0x2271F4` |
+| `8C0ABDE0`, `8C0ABE2C` | 2 | - | World Tour: the banner's parts again (`f_8C0372BA`, `f_8C0373A0`; worldtour.py) |
 | `8C0B39C8` | ptr | `0x2178C8` | command definitions (not by character): the PSP adds 0x40 and 0x41 |
 | `8C0A9278` | 4 | | object handlers by type, effect pool D (descriptor word 29): 47 -> 59 entries; the new characters' types 47-58 |
 | `8C0A9334` | 4 | | object handlers by type, projectiles (descriptor word 28): 43 -> 47 entries; types 43-46 |
@@ -1225,7 +1252,10 @@ opponent: the CPU playing a character). `arc_dlg.sh <name> <moves> <fights>`
 (arcade fight after fight with shots through each lead-in; 11 fights for
 Yun: the dolls' detour, then Bison and the ending, with `EXTRA="SFA3_CHEAT_CPU_KO=1
 SFA3_CHEAT_HEALTH=1"`: the dolls are two CPU fighters), `yun_final.sh`
-(the last fight in full, `health`/`refill`). `eagle_maki.sh` (Versus,
+(the last fight in full, `health`/`refill`), `arc_dlg_i.sh <instance> ...` (the
+same on test instance 6-9, `BIN=`; with `SFA3_POKE_EVERY` on the route
+`8C189400` and the beaten mask fighter +0x174, the world map's strip of
+beaten new characters: the 0.2.9 crash). `eagle_maki.sh` (Versus,
 Eagle against Maki, both refilled, random attacks), `em_special.sh` /
 `em_guard.sh` (every motion with every button; `PLAYERS=1 GUARD2=right`:
 Maki blocking), `spark21.sh <subtype>` (a spark of that subtype made with

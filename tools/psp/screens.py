@@ -43,6 +43,11 @@ PSP_STRIP_SPACING = 0x226914  # u16 per character (STRIPS' first half)
 PSP_STRIP_PARTS = 0x2C8ABC    # u8 per character: bank 8 part - 0xF4
 MAP_STRIPS = 0x8C0C1AC8       # the world map's name strip: bank 8 part (f_8C06DC3C; its spacing 8C0C1B14)
 PSP_MAP_STRIP_PARTS = 0x2C8A68  # u8 per character: bank 8 part - 0x94
+# the world map's strips of the route's opponents (0.2.9): a beaten opponent's name (u16 bank 8 part per
+# character), and a table of 24 parts by stage followed by the player's own name by character (entry 24 + c)
+MAP_BEATEN, PSP_MAP_BEATEN = 0x8C0C1BEC, 0x227190
+MAP_NAMES, PSP_MAP_PLAYER = 0x8C0C1C48, 0x227224   # the PSP's characters' entries (its stages' come before)
+MAP_NAMES_STAGES = 24
 CELLS = {0x28: (5, 0), 0x29: (5, 6), 0x26: (6, 2), 0x27: (6, 4)}  # the PSP's arcade grid
 FACE_PARTS = 0x8C0BE45A       # a character's face, a bank B part (moved, chartables.py)
 # versus mode's select screen: the grid (7 x 6, room after it for a 7th row) and its layout (the
@@ -153,6 +158,10 @@ def build(dc_select, psp_select, main, boot):
         strip = part8(boot[PSP_STRIP_PARTS + 0x74 + c] + 0xF4)
         patches.append((tables[STRIPS].ext + 4 * c, struct.pack("<HH", spacing, strip)))
         patches.append((tables[MAP_STRIPS].ext + 2 * c, struct.pack("<H", part8(boot[PSP_MAP_STRIP_PARTS + 0x74 + c] + 0x94))))
+        k = struct.unpack_from("<H", boot, PSP_MAP_BEATEN + 0x74 + 2 * c)[0]
+        patches.append((tables[MAP_BEATEN].ext + 2 * c, struct.pack("<H", part8(k))))
+        k = struct.unpack_from("<H", boot, PSP_MAP_PLAYER + 0x74 + 2 * c)[0]
+        patches.append((tables[MAP_NAMES].ext + 2 * (MAP_NAMES_STAGES + c), struct.pack("<H", part8(k))))
         patches.append((tables[BANNER_WIDTHS].ext + 2 * c, struct.pack("<H", 16 * w + 32)))
         # the big portrait: the PSP's animation, its parts renumbered
         recs = bytearray()
