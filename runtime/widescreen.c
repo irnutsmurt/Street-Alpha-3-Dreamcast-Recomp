@@ -986,17 +986,28 @@ static const EdgeIntro *edge_intro(uint32_t f) {  /* the table's intro f (a figh
 
 static int in_pool_b(uint32_t o) { return o >= POOL_B_LOW && o < POOL_B_END && (o - POOL_B_LOW) % 0xB0u == 0; }
 
+/* how far out from the 4:3 screen's middle an object is, on its fighter's side (units) */
+static int out_from_middle(uint32_t obj, uint32_t f) {
+    int s = (int16_t)R16(MAIN_LAYER + 0x12), x = (int16_t)R16(obj + 0x12);
+    return R8(f + 0x131) ? x - s - VIEW / 2 : s + VIEW / 2 - x;
+}
+
+/* a prop counts where it's put at the screen's edge: its anchor in the outer part of the screen (120 of the 192
+ * units out) or past it. (R. Mika always has another object of the ring's type, wherever she stands: in the
+ * arcade's story fights, without the ring, she was drawn the margin out all through their scene.) */
+#define EDGE_PROP_OUT 120
+
 static uint32_t prop_owner(uint32_t obj) {  /* the fighter whose intro's prop obj is, 0 if none */
     if (!in_pool_b(obj) || !R8(obj)) return 0;
-    uint32_t o = R32(obj + 0x48);
-    if (in_pool_b(o) && R8(o + 2) == R8(obj + 2)) o = R32(o + 0x48);
+    uint32_t root = obj, o = R32(obj + 0x48);
+    if (in_pool_b(o) && R8(o + 2) == R8(obj + 2)) root = o, o = R32(o + 0x48);  /* a prop's part */
     const EdgeIntro *e = edge_intro(o);
-    return e && e->type == R8(obj + 2) ? o : 0;
+    return e && e->type == R8(obj + 2) && out_from_middle(root, o) >= EDGE_PROP_OUT ? o : 0;
 }
 
 static int has_prop(uint32_t f, uint8_t type) {
     for (uint32_t o = POOL_B_LOW; o < POOL_B_END; o += 0xB0u)
-        if (R8(o) && R8(o + 2) == type && R32(o + 0x48) == f) return 1;
+        if (R8(o) && R8(o + 2) == type && R32(o + 0x48) == f && out_from_middle(o, f) >= EDGE_PROP_OUT) return 1;
     return 0;
 }
 

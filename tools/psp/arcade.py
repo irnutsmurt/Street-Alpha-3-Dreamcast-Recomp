@@ -19,12 +19,14 @@ twister seeded with the route number + 0x1C3, then for each of the 10 places:
          the same) and not from the previous opponent's stage (0x20B604)
          (f_2B024).
 Running that for each route number gives the PSP's 16 routes, which go in
-the Dreamcast's form.
+the Dreamcast's form: for every character (the Dreamcast's own 16 routes
+predate the new characters, so they'd never be anyone else's opponents).
 """
 import struct
 
 ROUTES = 0x8C0A8248
 VARIANTS, PLACES = 16, 8
+DC_CHARS = 0x26  # the Dreamcast's characters, 0x00-0x25: their routes are made the PSP's way too
 
 PSP_OFF = 0x74
 PSP_FIFTH, PSP_RIVAL, PSP_BOSS = 0x20A7D8, 0x20A784, 0x20A7AE

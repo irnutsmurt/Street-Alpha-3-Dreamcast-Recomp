@@ -632,8 +632,9 @@ texture (`0x10000900`); the PSP's adds the win quotes (`0x10001`, text).
   isn't excluded (`0x20AA24`). Fits (`0x2B024`): not in the route already
   (the other Chun-Li and Sodom counting as the same), not from the previous
   opponent's stage (`0x20B604`). `arcade.py` runs that for each route
-  number; the new characters' routes have the others as opponents, as on
-  the PSP.
+  number, for every character (the Dreamcast's 38 too: their own routes
+  predate the new characters, so those were only ever each other's
+  opponents); the rival and the boss stay the Dreamcast's tables'.
 - Prologue on the world map: the OP file; the portrait is bank `0x15` from
   part `8C0CF7D4[character]` to the last.
 - VS screen: the portraits are bank B parts of `SELECT.PAC` (a chain: the

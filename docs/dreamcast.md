@@ -161,6 +161,21 @@ The engine calls the overlay's first address with r4 = the fighter
 (`f_8C046D6E`, slot from `8C0B1BDC`). The entry copies the character's
 descriptor (39 words) to `*(fighter + 0x180)`.
 
+Recompiled, every overlay file (`PLnnX`, the endings' `ENDnn`) is its own
+set of functions, and a call into the overlay area finds the one whose
+bytes (code and constants) are those in RAM (`runtime/overlay.c`). Many
+are the same bytes in several files (19,848 of them; `f_8C8077AC` in all 33
+endings), and a recompiled function calls its own file's others directly:
+the first file's matched, its callees could differ from the loaded file's
+(43 such functions, 22 in the endings, the rest between a character's
+variant files). M. Bison's ending ran Ryu's `f_8C8077E8`, whose call went to
+`8C810058`, past Bison's ending: what an earlier, longer ending had left
+there (R. Mika's text), and the game stopped. The runtime now notes each
+overlay file the game opens (`hle_open_file`, `hle_open_numbered`: the
+player slot by its letter, an ending in the first) and takes that file's
+function when its bytes match; the PSP characters' endings (`END26`-`END29`)
+are `END06`'s code.
+
 ### Descriptor (39 words)
 
 | Word | What |
@@ -897,7 +912,11 @@ picture's edge instead (`s_edge_intros`: character, the prop's object type
 in the pool of 32 x 0xB0 down from `8C1847F8`, owned by the fighter, +0x48,
 or by the prop; the launch step; the mark): the props the margin further out,
 the fighter too until the launch and then by the share of it still to go.
-Only the drawing changes; the game is the 4:3 one's.
+Only the drawing changes; the game is the 4:3 one's. A prop counts only
+where it's put: its anchor 120 or more of the 192 units out from the screen's
+middle on its fighter's side (R. Mika always has another object of the
+ring's type, wherever she stands: in the arcade's story fights she was
+drawn the margin out all through their scene, then jumped into place).
 
 - Karin against Guy in his arcade (she's the CPU): her helicopter, PL1D type
   0x22 (sub-type 0 hers; 1 and 2 its parts, 3 the dust its rotor blows up),
