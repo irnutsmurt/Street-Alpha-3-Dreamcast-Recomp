@@ -250,7 +250,12 @@ void option_change(int i, int dir) {
         g_settings.vsync = !g_settings.vsync;
         renderer_settings_changed();
         break;
-    case OPT_SCANLINES: g_settings.scanlines = wrap(g_settings.scanlines, dir, 0, 2); break;
+    case OPT_SCANLINES: {  /* shown OFF, PVM, SCANLINES (sfa3.cfg keeps 1 scanlines, 2 PVM) */
+        static const int order[3] = {0, 2, 1};
+        int k = g_settings.scanlines == 2 ? 1 : g_settings.scanlines == 1 ? 2 : 0;
+        g_settings.scanlines = order[wrap(k, dir, 0, 2)];
+        break;
+    }
     case OPT_SCANLINE_STRENGTH: {
         int v = g_settings.scanline_strength + dir * 10;
         g_settings.scanline_strength = v < 10 ? 10 : v > 100 ? 100 : v;

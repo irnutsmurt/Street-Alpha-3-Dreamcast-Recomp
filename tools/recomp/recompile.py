@@ -290,10 +290,16 @@ def run(disc_dir, out_dir, report=None, progress=None):
     for sig, sname in sigs.items():
         body = ",".join(str(b) for b in sig)
         disp.append(f"static const uint8_t {sname}[] = {{{body}}};")
+    # each entry's overlay file (its name's tag): the runtime prefers the file loaded in the entry's slot, because
+    # identical functions in two files are told apart by nothing else, and one calls its own file's others directly
+    tags = sorted({cname.rsplit("_", 1)[1] for _, cname, _ in ovl_funcs})
+    tag_index = {t: i for i, t in enumerate(tags)}
+    disp.append("const char *const g_overlay_tags[] = {" + ", ".join(f'"{t}"' for t in tags) + "};")
+    disp.append(f"const unsigned g_overlay_tag_count = {len(tags)};")
     disp.append("const OverlayEntry g_overlay_funcs[] = {")
     ovl_funcs.sort()
     for a, cname, sig in ovl_funcs:
-        disp.append(f"  {{0x{a:08X}u, {cname}, {len(sig)}, {sigs[sig]}}},")
+        disp.append(f"  {{0x{a:08X}u, {cname}, {len(sig)}, {sigs[sig]}, {tag_index[cname.rsplit('_', 1)[1]]}}},")
     disp += ["};", f"const unsigned g_overlay_count = {len(ovl_funcs)};", ""]
     write_if_changed(os.path.join(out_dir, "dispatch.c"), "\n".join(disp))
     files.append("dispatch.c")

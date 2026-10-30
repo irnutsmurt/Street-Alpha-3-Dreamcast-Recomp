@@ -948,8 +948,10 @@ def build(boot_path, psp_data, dc_dir, out_dir, maps, spec="26=26,27=27,28=28,29
     patches += throw_patches
     print(f"throws: {len(throw_patches) - 1} lists for the PSP characters as opponents")
     import arcade
-    routes, end = arcade.patches(b.boot.data, [cid for cid, _ in pairs], chartables.EXT_ROUTES,
-                                 {t.dc: t for t in chartables.layout()}[arcade.ROUTES].ext)
+    # every character's routes the PSP's way, the Dreamcast's 38 too: the new characters among their opponents, as on
+    # the PSP (the Dreamcast's own routes predate them)
+    routes, end = arcade.patches(b.boot.data, list(range(arcade.DC_CHARS)) + [cid for cid, _ in pairs],
+                                 chartables.EXT_ROUTES, {t.dc: t for t in chartables.layout()}[arcade.ROUTES].ext)
     assert end <= chartables.EXT_SELECT
     patches += routes
     problems, nfiles = emit_c(b, out_dir, patches, screen_info)

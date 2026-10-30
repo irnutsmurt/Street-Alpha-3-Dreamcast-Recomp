@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include "overlay.h"
 #include "runtime.h"
 
 #define AREA 0x8C347300u
@@ -119,6 +120,15 @@ static uint32_t char_file_name(uint32_t pr, uint32_t name) {
 
 /* f_8C0126F4(number): opens names[number]; f_8C01B904 opens the prologue
  * (op, 126 + n) */
+/* the overlay files (PLnnX, ENDnn) the game loads, for overlay.c to tell which is in which slot */
+static void note_file(uint32_t p) {
+    char name[24];
+    int k = 0;
+    for (; k < 23 && R8(p + (uint32_t)k); k++) name[k] = (char)R8(p + (uint32_t)k);
+    name[k] = 0;
+    overlay_file_opened(name);
+}
+
 void f_8C0126F4_orig(void);
 void hle_open_numbered(void) {
     if (g.pr == 0x8C01BA44u && g.r[4] >= 126u) {
@@ -126,6 +136,8 @@ void hle_open_numbered(void) {
         if (c - FIRST_NEW < NEW_COUNT && new_name(F_OP, c))
             g.r[4] = NAME_COUNT + 4u * F_OP + (c - FIRST_NEW);
     }
+    uint32_t p = R32(char_table_moved(NAMES) + 4u * g.r[4]);
+    if (p >= 0x8C000000u && p < 0x8D000000u) note_file(p);
     f_8C0126F4_orig();
 }
 
@@ -133,6 +145,7 @@ void hle_open_numbered(void) {
 void f_8C012C80_orig(void);
 void hle_open_file(void) {
     g.r[4] = char_file_name(g.pr, g.r[4]);
+    note_file(g.r[4]);
     static int on = -1;
     if (on < 0) on = getenv("SFA3_FILE_LOG") != NULL;
     if (on) {
