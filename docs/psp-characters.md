@@ -692,7 +692,7 @@ counterpart. Confirmed by hand (`tools/psp/manual_maps.json`):
 | `0x1F338`, `0x1F3BC` | `8C025930`, `8C025998` | menu object spawn and free (PSP objects 0x94 bytes, DC 0x90; same fields below 0x90) |
 | `0x5DEDC`, `0x5E068` | `8C04C6D8`, `8C04C7F8` | fighter state change |
 | `0x5DF68` | `8C04C73C` | the same, with CPU branches (`0x77E00`=`8C059E8C`, `0x5FD4C`=`8C04D974`, `0x5F114`=`8C04D122`); the PSP also sets fighter +0xC0 (DC +0xB0) to 2 around it |
-| `0x67B1C` | `8C05082C` | from neutral: start walking or crouching (reads the pause flags `8C17FC6D`/`8C17FBE6` and the lever, calls the checks `0x67CB8`/`0x67E08`/`0x67D68` = `8C05090C`/`8C0509DC`/`8C050982`; returns 1 when it started one) |
+| `0x67B1C` | `8C05082C` | returns 1 when it started a new action from the current one (reads the pause flags `8C17FC6D`/`8C17FBE6` and the lever, calls the checks `0x67CB8`/`0x67E08`/`0x67D68` = `8C05090C`/`8C0509DC`/`8C050982`). HSFA's reading (the CPS2 arcade routine `$2EB06`, instruction for instruction): the normal-move cancel, needing +0x7B (a hit landed) and a new press (+0x2F8 & 0x3F0), the chain tests `0x67E08`/`0x67D68`, setting +0xC2/+0xC1/+0xC0; a stand loop also takes a 1 as "go to walking" (below) |
 | `0x67E50` | `8C0509FE` | its neighbour (calls `8C04D246`, `8C051CFE`) |
 
 ### Return values
@@ -1007,7 +1007,21 @@ Maki, `0x676A8`), `0x66890` (Ingrid: walks the fighters through the PSP's
 fighter pointer table `0x213F88`), `0x1DC324` (an event/demo system Ingrid's
 extra code calls), and the PSP-only command checker `0x64220` (Yun, command
 0x20) with its two handlers (`0x642AC`, `0x64368`, table `0x217D30`) and its
-button-configuration helpers (`0x634D4`-`0x63C30`).
+button-configuration helpers (`0x634D4`-`0x63C30`). HSFA's notes: `0x63708`,
+`0x64220` and `0x64A34` are the same code with different handler tables
+(`0x217D24`, `0x217D30` +3 entries, `0x217D4C` +10); `0x64220` is the
+arcade's "button press" motion (`$2D900`), Yun's motion 32, tested first in
+his specials chain (`0x1BC988` in `0x1BC8BC`); it only sets a flag at object
++0x3C8, used on contact.
+
+Cross-checked by HSFA (https://github.com/Rickow/SFA-Anthology-PS2-mods, the
+PSP characters retranslated to the CPS2 arcade game): the EU PSP build
+(ULES-00235) matches the US one at every address they checked (fighter
+table `0x213F88` / `0x498`, +0x152, the ending state `0x87FCB0`, the AI
+`0x732C0`, the script interpreter `0x74A20` and its tables `0x21E488` /
+`0x21E598`, the random byte `0x1D368`), and `0x1D044` is object physics
+(arcade `$1B0C4`). Their `re/connaissances/max_psp.tsv` lists the PSP
+functions' arcade equivalents.
 
 Game state: PSP `0x39C9E0` has the Dreamcast's `8C17FBC0` layout below +0xA0
 (the alignment votes agree; +0x72 is the game mode on both). Above that the
