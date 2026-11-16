@@ -15,6 +15,7 @@
 #include "runtime.h"
 #include "gameui.h"
 #include "options.h"
+#include "settings.h"
 
 /* Option Mode state: +8 sub-screen active, +9 cursor, +13 sub-state
  * (0 choosing, 1 item selected, 2/3 leaving). */
@@ -57,6 +58,11 @@ static void item_change(int i, int dir) {
 #define ROW_LAST 162  /* the lowest a row may start (EXIT's place with 12 rows) */
 /* CHEATS has more rows: everything starts higher, the title just under the top frame */
 #define CHEATS_LIFT 20
+/* with PICTURE 16:9 (or the screen's shape, full screen) two lines under EXIT: what's wide and what stays 4:3 */
+#define NOTE_GAP 12
+#define NOTE_STEP 10
+#define NOTE_LAST 138  /* the lowest the note's second line may start: clear of the scrolling banner */
+#define MAX_LIFT 24    /* the most the list moves up for it: the title stays below the top frame */
 /* the game's row-highlight object only knows the original screen's rows;
  * pointing the cursor past them hides it */
 #define NO_HIGHLIGHT_ROW 7
@@ -87,13 +93,21 @@ void hle_display_draw(void) {
     gameui_begin(TEXT_ARENA, TEXT_ARENA_END, 0x8C07C6B0u);
     const char *title = s_cheats ? "CHEATS" : "DISPLAY OPTION";
     int rows[ROW_MAX], n = visible_rows(rows);
-    /* CHEATS starts higher; so does a long DISPLAY list, just enough that EXIT stays above the banner */
-    int lift = s_cheats ? CHEATS_LIFT : ROW_Y0 + (n - 1) * ROW_STEP + 4 > ROW_LAST ? ROW_Y0 + (n - 1) * ROW_STEP + 4 - ROW_LAST : 0;
+    int note = !s_cheats && g_settings.picture == PICTURE_16_9;  /* a wide picture: say what stays 4:3 */
+    /* CHEATS starts higher; so does a long DISPLAY list, just enough that EXIT (and the note) stays above the banner */
+    int step = ROW_STEP, exit_y = ROW_Y0 + (n - 1) * step + 4, lift = exit_y > ROW_LAST ? exit_y - ROW_LAST : 0;
+    if (note && exit_y + NOTE_GAP + NOTE_STEP > NOTE_LAST + MAX_LIFT) {  /* a long list: the rows a little closer */
+        step = ROW_STEP - 1;
+        exit_y = ROW_Y0 + (n - 1) * step + 4;
+    }
+    if (note && exit_y + NOTE_GAP + NOTE_STEP - lift > NOTE_LAST) lift = exit_y + NOTE_GAP + NOTE_STEP - NOTE_LAST;
+    if (note && lift > MAX_LIFT) lift = MAX_LIFT;  /* the title stays on the screen */
+    if (s_cheats) lift = CHEATS_LIFT;
     gameui_print(title, SCREEN_W / 2 - gameui_text_w(title) / 2, TITLE_Y - lift, COL_GOLD);
     int y = ROW_Y0 - lift;
     for (int i = 0; i < n; i++) {
         int r = rows[i], sel = r == s_cursor;
-        y = ROW_Y0 - lift + i * ROW_STEP + (r >= row_default() ? 4 : 0);
+        y = ROW_Y0 - lift + i * step + (r >= row_default() ? 4 : 0);
         if (r >= items()) {
             /* centred like the game's own DEFAULT / EXIT */
             const char *label = r == row_default() ? "DEFAULT" : "EXIT";
@@ -109,11 +123,19 @@ void hle_display_draw(void) {
         const char *shown = sel && VALUE_RIGHT - gameui_text_w(b) >= LABEL_X + gameui_text_w(label) + CHAR_W ? b : v;
         gameui_print(shown, VALUE_RIGHT - gameui_text_w(shown), y, sel ? COL_GOLD : COL_BLUE);
     }
+    if (note) {
+        gameui_center("FIGHTS ARE SHOWN IN WIDESCREEN", y + NOTE_GAP, COL_GREY);
+        gameui_center("MENUS AND INTROS STAY AT 4:3", y + NOTE_GAP + NOTE_STEP, COL_GREY);
+    }
     if (s_cheats) {
         gameui_center("AGAINST THE CPU ONLY", y + 14, COL_GREY);
         gameui_center("FINAL BISON: START ON M.BISON", y + 24, COL_GREY);
     }
 }
+
+/* the DISPLAY screen up (not CHEATS): with a wide picture the renderer moves its frame's corner bars out to the
+ * picture's corners (vk_renderer.c) */
+int display_menu_shown(void) { return !s_cheats && s_last_frame && g_vblank_count - s_last_frame <= 4; }
 
 static void move(int dir) {
     int rows[ROW_MAX], n = visible_rows(rows);

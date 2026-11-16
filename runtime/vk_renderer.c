@@ -190,6 +190,8 @@ static uint32_t rt_width(void) { return (uint32_t)(R.pic_w * (float)R.height / 4
  * in a CRT's overscan on a Dreamcast; a flat screen showed them as a black bar at the bottom; checked on the title,
  * menus, select, story, map and fights). The render target is that much taller, so RENDER RES is the height
  * shown. 4:3 too: its picture 640 x 448, the game's own proportions (a little wider than 4:3, not stretched). */
+#define CORNER_PASS 100  /* atlas[] mark: the DISPLAY screen's corner bars, drawn in their own pass */
+int display_menu_shown(void);
 #define WIDE_TOP 8.0f
 #define WIDE_LINES 448.0f
 static uint32_t render_height_for(float pic_w) {
@@ -1364,6 +1366,29 @@ void renderer_draw(const PvrFrame *pf) {
             }
         }
     }
+    /* Option Mode > DISPLAY with a wide picture: its frame's eight corner bars (translucent yellow untextured
+     * quads in the 4:3 screen's corners, the game's rectangle list: f_8C0162A4) moved out to the picture's corners,
+     * shown in full past the 4:3 screen's edges (their own pass: CORNER_PASS), so the frame shows the picture's
+     * shape */
+    int corners = 0;
+    if (xoff > 0 && !wide_fight && display_menu_shown()) {
+        for (uint32_t i = 0; i < pf->npolys; i++) {
+            const PvrPoly *p = &pf->polys[i];
+            if ((p->isp & (1u << 25)) || p->vertex_count != 4 || atlas[i] >= 0 ||
+                vtmp[p->first_vertex].base != 0x80FFFF00u)
+                continue;
+            float x0 = 1e9f, x1 = -1e9f, y0 = 1e9f, y1 = -1e9f;
+            for (uint32_t k = 0; k < 4; k++) {
+                const PvrVertex *v = &vtmp[p->first_vertex + k];
+                x0 = fminf(x0, v->x), x1 = fmaxf(x1, v->x), y0 = fminf(y0, v->y), y1 = fmaxf(y1, v->y);
+            }
+            int side = x1 <= 81.0f ? -1 : x0 >= 559.0f ? 1 : 0;
+            if (!side || !(y1 <= 105.0f || y0 >= 359.0f)) continue;
+            for (uint32_t k = 0; k < 4; k++) vtmp[p->first_vertex + k].x += (float)side * xoff;
+            atlas[i] = CORNER_PASS;
+            corners++;
+        }
+    }
     memcpy((uint8_t *)f->vmap + f->vused, vtmp, vbytes);
     /* 16:9 background extension (widescreen.c, wide_filler.c's wide_extend): each background layer that lacks art in
      * view gets its precomputed fill drawn under the frame (ext.frag) */
@@ -1672,6 +1697,11 @@ void renderer_draw(const PvrFrame *pf) {
     extern float g_wide_probe_z;
     draw_polys(cmd, pf, sets, tr_order, ntr, autosort, push, full, xoff, gw, gh, W, H,
                g_wide_probe && wide_fight ? g_wide_probe_z : 0, atlas, -1);
+    if (corners) {  /* the DISPLAY screen's corner bars, past the 4:3 screen's edges */
+        VkRect2D all = {{0, 0}, {W, H}};
+        vkCmdSetScissor(cmd, 0, 1, &all);
+        draw_polys(cmd, pf, sets, tr_order, ntr, autosort, push, all, xoff, gw, gh, W, H, 0, atlas, CORNER_PASS);
+    }
     vkCmdEndRendering(cmd);
     if (R.timestamps && !f->timed) {
         vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, R.timestamps, (uint32_t)fidx * 2 + 1);

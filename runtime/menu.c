@@ -288,6 +288,10 @@ static void redraw(void) {
             text(px + pw - 10 - text_width(b), y, b, on ? RGBA(255, 230, 90, 255) : RGBA(110, 100, 60, 255));
         }
     }
+    if (g_settings.picture == PICTURE_16_9) {  /* as on Option Mode's DISPLAY screen: what's wide, what stays 4:3 */
+        const char *note = "FIGHTS: WIDESCREEN   MENUS AND INTROS: 4:3";
+        text(MENU_W / 2 - text_width(note) / 2, py + ph - 24, note, RGBA(150, 160, 200, 255));
+    }
     const char *help = "ARROWS: CHOOSE   ESC: CLOSE";
     text(MENU_W / 2 - text_width(help) / 2, py + ph - 11, help, RGBA(150, 160, 200, 255));
     s_dirty = 1;

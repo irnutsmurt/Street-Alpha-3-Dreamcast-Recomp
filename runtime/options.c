@@ -195,7 +195,7 @@ void option_value(int i, char *out, size_t n) {
     case OPT_COLOR: snprintf(out, n, "%s", colors[g_settings.color]); break;
     case OPT_RENDER_RES: {
         int h = g_settings.render_height;
-        snprintf(out, n, "%dX%d", (int)(picture_aspect() * (float)h + 0.5f), h);
+        snprintf(out, n, "%dX%d", (int)(picture_aspect() * (float)h + 0.5f) & ~1, h);  /* even, as the picture is */
         break;
     }
     case OPT_VSYNC: snprintf(out, n, "%s", g_settings.vsync ? "ON" : "OFF"); break;
