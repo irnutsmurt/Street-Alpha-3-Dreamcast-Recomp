@@ -346,7 +346,14 @@ def link_game(objects, runtime_lib, out_exe, libs, zig=None, progress=None, log=
         log(f"linking {os.path.basename(out_exe)} (the game code and the port's runtime)...")
     if progress:
         progress(0.0, "Linking")
-    cmd = [zig, "cc", *target(platform), "-o", out_exe, *objects, runtime_lib, *libs]
+    # the objects in a response file: on Windows a command line can't pass 32767 characters, which 339 objects'
+    # full paths under a long install path (X:/Games/.../SFA3/data/cache/...) did ("the file name or extension is
+    # too long", error 206)
+    rsp = out_exe + ".objects.rsp"
+    with open(rsp, "w", encoding="utf-8") as f:
+        for o in list(objects) + [runtime_lib]:
+            f.write('"' + os.path.abspath(o).replace("\\", "/") + '"\n')
+    cmd = [zig, "cc", *target(platform), "-o", out_exe, "@" + rsp, *libs]
     if strip:
         cmd.append("-s")
     kw = {"creationflags": 0x08000000} if os.name == "nt" else {}
@@ -359,6 +366,10 @@ def link_game(objects, runtime_lib, out_exe, libs, zig=None, progress=None, log=
         except subprocess.TimeoutExpired:  # creep towards the end, never quite reaching it
             if progress:
                 progress(min(0.97, (time.monotonic() - t1) / link_est), "Linking")
+    try:
+        os.remove(rsp)
+    except OSError:
+        pass
     if p.returncode:
         raise BuildError("linking failed:\n" + err[-3000:])
     if timings_path:
