@@ -79,7 +79,6 @@ typedef struct {
     Image color, depth;
     VkDescriptorSet blit_set;
     int initialized;
-    int wide_fight;        /* its last render a wide fight's: shown as the lines the game draws (WIDE_LINES) */
 } RenderTarget;
 
 typedef struct {
@@ -187,18 +186,17 @@ static struct {
 
 /* the render targets' width in pixels: the picture's shape at the RENDER RES height (16:9 at 2160: 3840) */
 static uint32_t rt_width(void) { return (uint32_t)(R.pic_w * (float)R.height / 480.0f + 0.5f); }
-/* A wide picture shows only the lines the game draws: its fights are 448 of the 480 (8 empty above, 24 below,
- * in a CRT's overscan on a Dreamcast; a flat screen showed them as a black bar at the bottom). The render target
- * is that much taller, so RENDER RES is the height shown. 4:3 is the game's whole picture, as it was. */
+/* The picture shows only the lines the game draws: every screen is in 448 of the 480 (8 empty above, 24 below,
+ * in a CRT's overscan on a Dreamcast; a flat screen showed them as a black bar at the bottom; checked on the title,
+ * menus, select, story, map and fights). The render target is that much taller, so RENDER RES is the height
+ * shown. 4:3 too: its picture 640 x 448, the game's own proportions (a little wider than 4:3, not stretched). */
 #define WIDE_TOP 8.0f
 #define WIDE_LINES 448.0f
-static int wide_picture(void) { return R.pic_w > 640.5f; }
-/* the other screens (title, menus, the prologue, the map: 4:3 in the middle of a wide picture) draw in those lines
- * too: they're shown whole, their height the screen's */
 static uint32_t render_height_for(float pic_w) {
+    (void)pic_w;
     uint32_t h = (uint32_t)g_settings.render_height;
     if (h < 240 || h > 4320) h = 1440;
-    return pic_w > 640.5f ? (uint32_t)((float)h * 480.0f / WIDE_LINES + 0.5f) : h;
+    return (uint32_t)((float)h * 480.0f / WIDE_LINES + 0.5f);
 }
 
 /* ---------------- helpers ---------------- */
@@ -629,9 +627,8 @@ static void alloc_vbuf(Frame *f) {
 
 int renderer_init(void *window) {
     R.window = window;
-    R.height = (uint32_t)g_settings.render_height;
-    if (R.height < 240 || R.height > 4320) R.height = 1440;
     R.pic_w = 640;
+    R.height = render_height_for(R.pic_w);
     const char *shot = getenv("SFA3_SHOT_EVERY");
     R.shot_every = shot ? atoi(shot) : 0;
     const char *shot_from = getenv("SFA3_SHOT_FROM");
@@ -1304,7 +1301,6 @@ void renderer_draw(const PvrFrame *pf) {
     memcpy(vtmp, pf->verts, vbytes);
     float stage_bar;  /* widescreen: the picture's sides a stage's art doesn't reach (widescreen.c) */
     int wide_fight = widescreen_stage_frame(pf->wide_list, &stage_bar) && xoff > 0;  /* a fight's frame, drawn wide */
-    rt->wide_fight = wide_fight;
     if (!widescreen_list_captures(pf->wide_list)) atlas_layers = 0;  /* (only where widescreen.c asked for them) */
     if (wide_fight || atlas_layers) {
         PvrVertex *vv = vtmp;
@@ -1870,12 +1866,11 @@ void renderer_present_fb(void) {
         float w = sw, h = sh;
         {  /* the picture's shape, 4:3 or 16:9 (4:3 in an online game), as big as fits: black at the sides of a
             * wider screen, above and below on a taller one */
-            int cropped = wide_picture() && rt->wide_fight;
-            float aspect = R.pic_w / (cropped ? WIDE_LINES : 480.0f);
+            float aspect = R.pic_w / WIDE_LINES;
             h = sw / aspect;
             if (h > sh) { h = sh; w = sh * aspect; }
-            if (cropped && fabsf(aspect / (sw / sh) - 1.0f) < 0.01f) w = sw, h = sh;  /* the screen's shape, to a whole
-                                                                                  * unit: filled */
+            if (fabsf(aspect / (sw / sh) - 1.0f) < 0.01f) w = sw, h = sh;  /* the screen's shape, to a whole unit:
+                                                                          * filled */
         }
         /* whole-pixel placement keeps integer scaling crisp */
         float ox = (float)(int)((sw - w) / 2), oy = (float)(int)((sh - h) / 2);
@@ -1888,7 +1883,7 @@ void renderer_present_fb(void) {
         float cc[4];
         memcpy(cc, color[g_settings.color < 0 || g_settings.color > 2 ? 0 : g_settings.color], sizeof cc);
         cc[2] = (float)g_settings.scanlines;  /* CRT style */
-        int crop = wide_picture() && rt->wide_fight;
+        int crop = 1;
         float push[16] = {-1.0f + 2 * ox / sw, -1.0f + 2 * oy / sh, 2 * w / sw, 2 * h / sh,
                           g_settings.scanlines ? g_settings.scanline_strength / 100.0f : 0.0f,
                           crop ? WIDE_LINES / 2 : 240.0f, 0, h, cc[0], cc[1], cc[2], cc[3],

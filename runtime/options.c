@@ -55,13 +55,14 @@ static const int s_h43[] = {480, 720, 960, 1080, 1440, 1920, 2160, 2400, 2880};
 static const int s_h169[] = {480, 720, 1080, 1440, 2160, 2880};
 #define COUNT(a) ((int)(sizeof a / sizeof a[0]))
 
-static int width_for(int h, int wide) { return wide ? (h * 16 / 9 + 1) & ~1 : h * 4 / 3; }
+/* the picture's width at a height: the game's 448 drawn lines (vk_renderer.c), 16:9 or at 640 x 448's shape */
+static int width_for(int h, int wide) { return wide ? (h * 16 / 9 + 1) & ~1 : (h * 10 / 7 + 1) & ~1; }
 
 /* the picture's shape, width / height (as the renderer makes it: 4:3 in an online game) */
-/* a wide picture is the 448 lines the game draws (vk_renderer.c), 4:3 all 480 */
+/* the picture is the 448 lines the game draws (vk_renderer.c) */
 static float picture_aspect(void) {
     int m = widescreen_wanted();
-    return (640.0f + 2.0f * (float)m * 640.0f / 384.0f) / (m ? 448.0f : 480.0f);
+    return (640.0f + 2.0f * (float)m * 640.0f / 384.0f) / 448.0f;
 }
 
 /* the list's entry at or below h (the first if none) */
@@ -83,11 +84,11 @@ static void fit_size(int *w, int *h) {
     if (!SDL_GetDisplayUsableBounds(display(), &r)) { *h = 480; *w = width_for(480, wide); return; }
     /* exactly the shape: the height a multiple of 36 (16:9) or 12 (4:3), so the width is whole and even */
     int step = wide ? 36 : 12, hh = r.h - 48;
-    if (width_for(hh, wide) > r.w - 16) hh = wide ? (r.w - 16) * 9 / 16 : (r.w - 16) * 3 / 4;
+    if (width_for(hh, wide) > r.w - 16) hh = wide ? (r.w - 16) * 9 / 16 : (r.w - 16) * 7 / 10;
     hh = hh / step * step;
     if (hh < step) hh = step;
     *h = hh;
-    *w = wide ? hh * 16 / 9 : hh * 4 / 3;
+    *w = width_for(hh, wide);
 }
 
 /* the window heights of the window's shape that fit the desktop: entries 0..n-1 of its list (at least one) */

@@ -874,16 +874,16 @@ scale, where the view's own tiles (laid out past the 4:3 screen's left edge)
 end over the margin's layout of the same layer, which sits a pixel or two
 left of them.
 
-The fights are drawn in 448 of the picture's 480 lines (8 empty above, 24
+Every screen is drawn in 448 of the picture's 480 lines (8 empty above, 24
 below: a CRT TV's overscan hid them; a flat screen showed a bar at the
-bottom). A 16:9 fight shows just those lines (`vk_renderer.c`: the render
-target 480 / 448 taller, so RENDER RES is the height shown, and the
-presentation's source rows 8-456 on a wide fight's frames), and the margin
-makes them 16:9: 47 units each side. Full screen on a screen narrower than
-16:9 the margin fills it (a Steam Deck's 1280 x 800: 23); on a wider one
-it's 64 at most. The other screens (title, menus, prologue, map) draw in
-those lines: they're shown whole, their height the screen's. 4:3 is the
-game's whole picture, as before.
+bottom; checked on the title, menus, select, story, map and fights). The
+picture shows just those lines, in every mode (`vk_renderer.c`: the render
+target 480 / 448 taller, so RENDER RES is the height shown; the
+presentation's source rows 8-456). 16:9's margin makes them 16:9: 47 units
+each side; full screen on a screen narrower than 16:9 the margin fills it (a
+Steam Deck's 1280 x 800: 23), on a wider one 64 at most. 4:3's picture is
+640 x 448, the game's own proportions; what's rendered is pixel for pixel
+0.2.6's (at RENDER RES 1344 the render target is 0.2.6's 1440).
 
 The game is still played on the 4:3 screen: the wide view only draws more of
 it, so what the game does "off the screen" can be in the picture. The
