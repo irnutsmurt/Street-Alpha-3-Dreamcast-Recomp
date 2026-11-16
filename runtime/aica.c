@@ -302,9 +302,11 @@ static float voice_sample(int ch) {
                 v->loop_saved = 1;
             }
         }
+        /* between the sample before and this one (a sample late), as the AICA interpolates: holding each
+         * sample instead put images of a 22 kHz voice's high end back into the audible range (the announcer's
+         * S's hissed) */
         s0 = v->prev;
         s1 = v->cur;
-        frac = 0xFFFFFFFFu;  /* decoder output lags by one sample; no interpolation */
         break;
     }
     }

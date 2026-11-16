@@ -23,6 +23,9 @@ class Track:
         self.f = open(path, "rb")
         self.nsectors = count if count is not None else (os.path.getsize(path) - self.offset) // sector_size
 
+    def close(self):
+        self.f.close()
+
     def read_sector(self, lba):
         rel = lba - self.lba
         if not 0 <= rel < self.nsectors:
@@ -32,6 +35,20 @@ class Track:
 
 
 _LINE = re.compile(r'^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+("[^"]*"|\S+)\s+(-?\d+)(?:\s+(\d+))?\s*$')
+
+
+class open_gdi:
+    """with open_gdi(path) as tracks: the tracks, their files closed afterwards (Windows can't delete a file that's
+    still open: the unpacked CHD's tracks, removed once the install has its own copy)"""
+    def __init__(self, gdi_path):
+        self.tracks = parse_gdi(gdi_path)
+
+    def __enter__(self):
+        return self.tracks
+
+    def __exit__(self, *exc):
+        for t in self.tracks:
+            t.close()
 
 
 def parse_gdi(gdi_path):
@@ -186,7 +203,8 @@ def write_compact(tracks, out_dir, progress=None):
 
 
 def main():
-    extract(parse_gdi(sys.argv[1]), sys.argv[2])
+    with open_gdi(sys.argv[1]) as tracks:
+        extract(tracks, sys.argv[2])
 
 
 if __name__ == "__main__":

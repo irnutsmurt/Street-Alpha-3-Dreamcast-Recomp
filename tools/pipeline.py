@@ -206,6 +206,17 @@ def _addon_child(paths, psp_image, q):
         q.put(("error", f"converting the PSP characters failed ({e!r})"))
 
 
+def tidy(p, log):
+    """remove a work file or folder the game doesn't need; only tidying, so a failure is logged, not fatal (a file
+    something else still holds, a virus scanner's; on Windows a path past 260 characters, reached with \\\\?\\)"""
+    if os.name == "nt" and not p.startswith("\\\\?\\"):
+        p = "\\\\?\\" + os.path.abspath(p)
+    try:
+        shutil.rmtree(p) if os.path.isdir(p) else os.remove(p)
+    except OSError as e:
+        log(f"tidy: couldn't remove {p} ({e}); it goes next time")
+
+
 class AddonProcess:
     """the PSP characters converting in a second process (multiprocessing, spawned: the same on
     Linux and Windows, and in the packaged app, whose main calls freeze_support())"""
@@ -305,7 +316,8 @@ def run(image, force=False, toolchain="auto", progress=None, log=print, paths=No
         shutil.rmtree(paths.disc, ignore_errors=True)
         try:
             with contextlib.redirect_stdout(io.StringIO()):
-                listing = gdi_extract.extract(gdi_extract.parse_gdi(gdi), paths.disc)
+                with gdi_extract.open_gdi(gdi) as tracks:
+                    listing = gdi_extract.extract(tracks, paths.disc)
         except (AssertionError, OSError, ValueError, IndexError) as e:
             raise SetupError(f"could not read the game's files from the disc image ({e})")
         log(f"extract: {len(listing)} files")
@@ -343,9 +355,10 @@ def run(image, force=False, toolchain="auto", progress=None, log=print, paths=No
             tmp = compact + ".new"
             shutil.rmtree(tmp, ignore_errors=True)
             try:
-                gdi_extract.write_compact(gdi_extract.parse_gdi(gdi), tmp,
-                                          progress=lambda d, t: step("verify", d / max(t, 1),
-                                                                     "Copying the game's data into the install"))
+                with gdi_extract.open_gdi(gdi) as tracks:
+                    gdi_extract.write_compact(tracks, tmp,
+                                              progress=lambda d, t: step("verify", d / max(t, 1),
+                                                                         "Copying the game's data into the install"))
             except (OSError, ValueError, IndexError) as e:
                 shutil.rmtree(tmp, ignore_errors=True)
                 raise SetupError(f"could not copy the game's data into the install ({e})")
@@ -355,8 +368,7 @@ def run(image, force=False, toolchain="auto", progress=None, log=print, paths=No
             log(f"disc: copied into the install ({gdi})")
         for name in os.listdir(paths.image_work) if os.path.isdir(paths.image_work) else []:  # an unpacked CHD, a CUE's GDI: no longer needed
             if name != "compact":
-                p = os.path.join(paths.image_work, name)
-                shutil.rmtree(p) if os.path.isdir(p) else os.remove(p)
+                tidy(os.path.join(paths.image_work, name), log)
 
     # what this build's steps depend on, against what the last one recorded
     use_zig = toolchain == "zig" or (toolchain == "auto" and paths.zig and paths.runtime_lib)
@@ -486,8 +498,7 @@ def run(image, force=False, toolchain="auto", progress=None, log=print, paths=No
         shutil.rmtree(os.path.join(paths.build, "psp_out"), ignore_errors=True)  # the add-on's: made again each time
         for name in os.listdir(paths.disc):
             if name not in ("IP.BIN", "1ST_READ.BIN"):
-                p = os.path.join(paths.disc, name)
-                shutil.rmtree(p) if os.path.isdir(p) else os.remove(p)
+                tidy(os.path.join(paths.disc, name), log)
     with open(os.path.join(paths.build, "disc_path.txt"), "w") as f:
         f.write(gdi + "\n")
     if paths.install:

@@ -1,7 +1,8 @@
 /* 16:9 fights (Option Mode > DISPLAY > PICTURE 16:9).
  *
  * The game draws for a 384 x 224 screen (its units; 640 x 448 pixels here).
- * A 16:9 picture is 64 units wider on each side. The game itself is
+ * A 16:9 picture is 47 units wider on each side (of the 448 lines a fight is drawn in; up to 64 on a wider
+ * screen, less on a 16:10 one: screen_margin). The game itself is
  * unchanged: its camera, the walls (the camera's limits) and so the furthest
  * the fighters can be apart are the 4:3 game's; only what is drawn changes:
  *
@@ -73,7 +74,7 @@
 #define MAIN_LAYER 0x8C1888B4u
 #define SCREEN_OFFSET_X 0x8C18EF4Cu  /* float pixels, added to everything the stage layout and sprites place */
 #define VIEW 384                     /* the game's screen width, units */
-#define MARGIN_16_9 64               /* (16 / 9 x 224 - 384) / 2, near enough: 853.3 pixels wide */
+#define MARGIN_16_9 64               /* the most margin (an ultrawide screen's); 16:9 of the drawn lines is 47 */
 #define MARGIN_MAX 192
 #define FLOOR_Q 0x8C188A08u          /* (camera - middle) / a stage's constant, 16.16 (f_8C0223AA) */
 #define FLOOR_A 0x8C188A5Cu          /* that x a second constant */
@@ -91,13 +92,30 @@ static int s_stage_frame;        /* the fight's stage is being laid out wide (cl
 int widescreen_margin(void) { return s_wide; }
 float widescreen_margin_px(void) { return (float)s_wide * 640.0f / (float)VIEW; }
 
-/* the picture's margin (units each side): 16:9's with PICTURE 16:9, else 0 (the renderer asks each frame and
- * applies a new one with widescreen_set between frames) */
+/* PICTURE 16:9: a wide picture shows the 448 lines the game draws (vk_renderer.c leaves out the empty 8 above and
+ * 24 below), as wide as 16:9 makes them: 47 units more each side. Full screen, the screen's own shape instead, from
+ * just past 4:3 (a Steam Deck's 16:10: 23) to 64 (an ultrawide's, the most: past it the stage has no more). A
+ * window is 16:9: its size follows the picture's. */
+#define DRAWN_LINES 448.0
+extern SDL_Window *g_window;
+static int screen_margin(void) {
+    int w = 0, h = 0;
+    double aspect = 16.0 / 9.0;
+    if (g_settings.window_mode != WINDOW_WINDOWED && g_window && SDL_GetWindowSizeInPixels(g_window, &w, &h) && w > 0 &&
+        h > 0)
+        aspect = (double)w / h;
+    double px = aspect * DRAWN_LINES - 640.0;  /* the extra width in guest pixels */
+    int m = (int)floor(px / 2 * VIEW / 640.0 + 0.5);
+    return m < 0 ? 0 : m > MARGIN_16_9 ? MARGIN_16_9 : m;
+}
+
+/* the picture's margin (units each side): 16:9's with PICTURE 16:9 (less on a narrower screen, full screen:
+ * screen_margin), else 0 (the renderer asks each frame and applies a new one with widescreen_set between frames) */
 int widescreen_wanted(void) {
     if (netplay_active()) return 0;
     static int forced = -2;  /* SFA3_WIDE=<units>: a margin whatever the setting (testing headless) */
     if (forced == -2) forced = getenv("SFA3_WIDE") ? atoi(getenv("SFA3_WIDE")) : -1;
-    int m = forced >= 0 ? forced : g_settings.picture == PICTURE_16_9 ? MARGIN_16_9 : 0;
+    int m = forced >= 0 ? forced : g_settings.picture == PICTURE_16_9 ? screen_margin() : 0;
     return m < 0 ? 0 : m > MARGIN_MAX ? MARGIN_MAX : m;
 }
 

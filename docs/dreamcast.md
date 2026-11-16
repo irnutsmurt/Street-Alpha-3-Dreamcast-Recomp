@@ -788,7 +788,7 @@ is hidden (0C's black corner: black shows in the 4:3 game's opposite corner),
 or at the very end of a layer's art.
 
 16:9 (`runtime/widescreen.c`): the camera is the game's, stopped a margin
-(64 units) from each wall; every layer moves at its own speed (from the
+(the margin: 47 units for 16:9, the screen's own shape full screen, 23 on a 16:10 one, at most 64) from each wall; every layer moves at its own speed (from the
 stage's tables above); the margins are laid out through the screen offset;
 the culls above are widened (`tools/recomp/recompile.py` REPLACE), except
 for screen-fixed objects (obj +0x0E 0, the HUD's: the combo counter's banner
@@ -873,6 +873,17 @@ pixels). Not fixed by it: a seam in the left margin of 16:9 fights, at any
 scale, where the view's own tiles (laid out past the 4:3 screen's left edge)
 end over the margin's layout of the same layer, which sits a pixel or two
 left of them.
+
+The fights are drawn in 448 of the picture's 480 lines (8 empty above, 24
+below: a CRT TV's overscan hid them; a flat screen showed a bar at the
+bottom). A 16:9 fight shows just those lines (`vk_renderer.c`: the render
+target 480 / 448 taller, so RENDER RES is the height shown, and the
+presentation's source rows 8-456 on a wide fight's frames), and the margin
+makes them 16:9: 47 units each side. Full screen on a screen narrower than
+16:9 the margin fills it (a Steam Deck's 1280 x 800: 23); on a wider one
+it's 64 at most. The other screens (title, menus, prologue, map) draw in
+those lines: they're shown whole, their height the screen's. 4:3 is the
+game's whole picture, as before.
 
 The game is still played on the 4:3 screen: the wide view only draws more of
 it, so what the game does "off the screen" can be in the picture. The

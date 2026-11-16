@@ -2,6 +2,7 @@
  * resolution and presents the framebuffer the game is scanning out. */
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -78,6 +79,7 @@ typedef struct {
     Image color, depth;
     VkDescriptorSet blit_set;
     int initialized;
+    int wide_fight;        /* its last render a wide fight's: shown as the lines the game draws (WIDE_LINES) */
 } RenderTarget;
 
 typedef struct {
@@ -185,6 +187,19 @@ static struct {
 
 /* the render targets' width in pixels: the picture's shape at the RENDER RES height (16:9 at 2160: 3840) */
 static uint32_t rt_width(void) { return (uint32_t)(R.pic_w * (float)R.height / 480.0f + 0.5f); }
+/* A wide picture shows only the lines the game draws: its fights are 448 of the 480 (8 empty above, 24 below,
+ * in a CRT's overscan on a Dreamcast; a flat screen showed them as a black bar at the bottom). The render target
+ * is that much taller, so RENDER RES is the height shown. 4:3 is the game's whole picture, as it was. */
+#define WIDE_TOP 8.0f
+#define WIDE_LINES 448.0f
+static int wide_picture(void) { return R.pic_w > 640.5f; }
+/* the other screens (title, menus, the prologue, the map: 4:3 in the middle of a wide picture) draw in those lines
+ * too: they're shown whole, their height the screen's */
+static uint32_t render_height_for(float pic_w) {
+    uint32_t h = (uint32_t)g_settings.render_height;
+    if (h < 240 || h > 4320) h = 1440;
+    return pic_w > 640.5f ? (uint32_t)((float)h * 480.0f / WIDE_LINES + 0.5f) : h;
+}
 
 /* ---------------- helpers ---------------- */
 
@@ -686,7 +701,7 @@ int renderer_init(void *window) {
                                        .pSetLayouts = &R.set_layout, .pushConstantRangeCount = 1,
                                        .pPushConstantRanges = &pr};
     VKCHECK(vkCreatePipelineLayout(R.dev, &plci, NULL, &R.pvr_layout));
-    VkPushConstantRange bpr = {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, 48};
+    VkPushConstantRange bpr = {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, 64};
     plci.pPushConstantRanges = &bpr;
     VKCHECK(vkCreatePipelineLayout(R.dev, &plci, NULL, &R.blit_layout));
 
@@ -795,7 +810,7 @@ void widescreen_set(int units);
 #include "widescreen.h"
 void renderer_settings_changed(void) {
     R.sc_dirty = 1;
-    if ((uint32_t)g_settings.render_height != R.height) s_rt_rebuild = 1;
+    if (render_height_for(R.pic_w) != R.height) s_rt_rebuild = 1;
 }
 
 static void rebuild_render_targets(void) {
@@ -807,9 +822,9 @@ static void rebuild_render_targets(void) {
         destroy_image(&rt->depth);
         memset(rt, 0, sizeof *rt);
     }
-    R.height = (uint32_t)g_settings.render_height;
     widescreen_set(s_margin_wanted);
     R.pic_w = 640.0f + 2.0f * widescreen_margin_px();
+    R.height = render_height_for(R.pic_w);
     s_rt_rebuild = 0;
     logf_("render resolution now %ux%u", rt_width(), R.height);
 }
@@ -1289,6 +1304,7 @@ void renderer_draw(const PvrFrame *pf) {
     memcpy(vtmp, pf->verts, vbytes);
     float stage_bar;  /* widescreen: the picture's sides a stage's art doesn't reach (widescreen.c) */
     int wide_fight = widescreen_stage_frame(pf->wide_list, &stage_bar) && xoff > 0;  /* a fight's frame, drawn wide */
+    rt->wide_fight = wide_fight;
     if (!widescreen_list_captures(pf->wide_list)) atlas_layers = 0;  /* (only where widescreen.c asked for them) */
     if (wide_fight || atlas_layers) {
         PvrVertex *vv = vtmp;
@@ -1854,9 +1870,12 @@ void renderer_present_fb(void) {
         float w = sw, h = sh;
         {  /* the picture's shape, 4:3 or 16:9 (4:3 in an online game), as big as fits: black at the sides of a
             * wider screen, above and below on a taller one */
-            float aspect = R.pic_w / 480.0f;
+            int cropped = wide_picture() && rt->wide_fight;
+            float aspect = R.pic_w / (cropped ? WIDE_LINES : 480.0f);
             h = sw / aspect;
             if (h > sh) { h = sh; w = sh * aspect; }
+            if (cropped && fabsf(aspect / (sw / sh) - 1.0f) < 0.01f) w = sw, h = sh;  /* the screen's shape, to a whole
+                                                                                  * unit: filled */
         }
         /* whole-pixel placement keeps integer scaling crisp */
         float ox = (float)(int)((sw - w) / 2), oy = (float)(int)((sh - h) / 2);
@@ -1869,9 +1888,11 @@ void renderer_present_fb(void) {
         float cc[4];
         memcpy(cc, color[g_settings.color < 0 || g_settings.color > 2 ? 0 : g_settings.color], sizeof cc);
         cc[2] = (float)g_settings.scanlines;  /* CRT style */
-        float push[12] = {-1.0f + 2 * ox / sw, -1.0f + 2 * oy / sh, 2 * w / sw, 2 * h / sh,
-                          g_settings.scanlines ? g_settings.scanline_strength / 100.0f : 0.0f, 240.0f, 0, h,
-                          cc[0], cc[1], cc[2], cc[3]};
+        int crop = wide_picture() && rt->wide_fight;
+        float push[16] = {-1.0f + 2 * ox / sw, -1.0f + 2 * oy / sh, 2 * w / sw, 2 * h / sh,
+                          g_settings.scanlines ? g_settings.scanline_strength / 100.0f : 0.0f,
+                          crop ? WIDE_LINES / 2 : 240.0f, 0, h, cc[0], cc[1], cc[2], cc[3],
+                          crop ? WIDE_TOP / 480.0f : 0.0f, crop ? WIDE_LINES / 480.0f : 1.0f, 0, 0};
         VkViewport vp = {0, 0, sw, sh, 0, 1};
         VkRect2D sc = {{0, 0}, R.sc_extent};
         vkCmdSetViewport(cmd, 0, 1, &vp);
@@ -1884,6 +1905,7 @@ void renderer_present_fb(void) {
         if (menu_overlay_visible() && R.overlay_ready) {
             push[4] = 0;
             push[6] = 1;
+            push[12] = 0, push[13] = 1;  /* the menu overlay: all of it */
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, R.overlay_pipeline);
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, R.blit_layout, 0, 1, &R.overlay_set, 0,
                                     NULL);

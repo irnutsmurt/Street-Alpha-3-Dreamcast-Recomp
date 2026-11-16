@@ -4,6 +4,7 @@ layout(push_constant) uniform PC {
     vec4 rect;    // x, y, w, h in NDC
     vec4 params;  // scanline strength (0 = off), scanline count, mode (0 game, 1 overlay), picture height in pixels
     vec4 color;   // gamma exponent, saturation, unused, TV levels (1 = on)
+    vec4 crop;    // the source lines shown: first, count (fractions of the picture: a wide one shows 448 of 480)
 } pc;
 void main() {
     vec2 p = vec2(gl_VertexIndex & 1, gl_VertexIndex >> 1);

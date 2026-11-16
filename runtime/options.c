@@ -58,7 +58,11 @@ static const int s_h169[] = {480, 720, 1080, 1440, 2160, 2880};
 static int width_for(int h, int wide) { return wide ? (h * 16 / 9 + 1) & ~1 : h * 4 / 3; }
 
 /* the picture's shape, width / height (as the renderer makes it: 4:3 in an online game) */
-static float picture_aspect(void) { return (640.0f + 2.0f * (float)widescreen_wanted() * 640.0f / 384.0f) / 480.0f; }
+/* a wide picture is the 448 lines the game draws (vk_renderer.c), 4:3 all 480 */
+static float picture_aspect(void) {
+    int m = widescreen_wanted();
+    return (640.0f + 2.0f * (float)m * 640.0f / 384.0f) / (m ? 448.0f : 480.0f);
+}
 
 /* the list's entry at or below h (the first if none) */
 static int list_index(const int *list, int n, int h) {
@@ -180,7 +184,13 @@ void option_value(int i, char *out, size_t n) {
             snprintf(out, n, "%dX%d %dHZ", g_settings.fs_width, g_settings.fs_height, g_settings.fs_refresh);
         }
         break;
-    case OPT_PICTURE: snprintf(out, n, "%s", g_settings.picture == PICTURE_16_9 ? "16:9" : "4:3"); break;
+    case OPT_PICTURE:  /* 16:9, or the full screen's shape when it's narrower (widescreen.c: 16:10, a Steam Deck) */
+        if (g_settings.picture != PICTURE_16_9) snprintf(out, n, "4:3");
+        else {
+            float a = picture_aspect();
+            snprintf(out, n, "%s", a > 1.75f && a < 1.80f ? "16:9" : a > 1.57f && a < 1.63f ? "16:10" : "WIDE");
+        }
+        break;
     case OPT_COLOR: snprintf(out, n, "%s", colors[g_settings.color]); break;
     case OPT_RENDER_RES: {
         int h = g_settings.render_height;

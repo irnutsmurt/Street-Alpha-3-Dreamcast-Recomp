@@ -6,7 +6,11 @@ layout(push_constant) uniform PC {
     vec4 rect;
     vec4 params;  // scanline strength (0 = off), scanline count, mode (0 game, 1 overlay), picture height in pixels
     vec4 color;   // gamma exponent, saturation, CRT style (1 scanlines, 2 PVM), TV levels (1 = on)
+    vec4 crop;    // the source lines shown: first, count (fractions of the picture: a wide one shows 448 of 480)
 } pc;
+
+// the source at a point of the picture shown (its lines crop.x .. crop.x + crop.y of the render)
+vec4 src_at(vec2 uv) { return texture(src, vec2(uv.x, pc.crop.x + uv.y * pc.crop.y)); }
 
 // the COLOR setting's response: TV/video levels (16-235 shown as 0-255, as a
 // television or video capture displays the Dreamcast's output), then gamma
@@ -21,9 +25,9 @@ vec3 adjust(vec3 rgb) {
 // The source, adjusted, in linear light, softened horizontally like a CRT beam.
 vec3 beam_sample(vec2 uv) {
     float px = 1.0 / 640.0;
-    vec3 c = adjust(texture(src, uv).rgb) * 0.5
-           + adjust(texture(src, uv - vec2(px * 0.5, 0.0)).rgb) * 0.25
-           + adjust(texture(src, uv + vec2(px * 0.5, 0.0)).rgb) * 0.25;
+    vec3 c = adjust(src_at(uv).rgb) * 0.5
+           + adjust(src_at(uv - vec2(px * 0.5, 0.0)).rgb) * 0.25
+           + adjust(src_at(uv + vec2(px * 0.5, 0.0)).rgb) * 0.25;
     return pow(c, vec3(2.4));
 }
 
@@ -58,7 +62,7 @@ vec3 pvm(float s) {
         rgb *= m / avg;  // keep overall brightness
     }
     // glow: light spreading in the glass around bright areas
-    vec2 r = vec2(2.5 / 640.0, 2.5 / 480.0);
+    vec2 r = vec2(2.5 / 640.0, 2.5 / 480.0 / pc.crop.y);
     vec3 glow = (beam_sample(v_uv + vec2(r.x, 0.0)) + beam_sample(v_uv - vec2(r.x, 0.0)) +
                  beam_sample(v_uv + vec2(0.0, r.y)) + beam_sample(v_uv - vec2(0.0, r.y))) * 0.25;
     rgb += glow * glow * 0.15 * s;  // mostly from bright areas
@@ -66,7 +70,7 @@ vec3 pvm(float s) {
 }
 
 void main() {
-    vec4 c = texture(src, v_uv);
+    vec4 c = src_at(v_uv);
     if (pc.params.z > 0.5) {  // menu overlay: straight alpha, blended by the pipeline
         o_color = c;
         return;
